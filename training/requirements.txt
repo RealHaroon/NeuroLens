@@ -1,0 +1,4 @@
+# Python 3.12 (TensorFlow has no stable wheel for 3.13+/3.14 at the time of writing)
+tensorflow-cpu==2.21.0
+keras==3.15.1
+numpy==2.5.4
