@@ -2,6 +2,8 @@
   "name": "neurolens",
   "version": "0.1.0",
   "private": true,
+  "description": "Interactive 3D visualization of a small CNN classifying hand-drawn digits",
+  "author": "Muhammad Haroon Abbas",
   "type": "module",
   "scripts": {
     "dev": "node node_modules/vite/bin/vite.js",

@@ -1,5 +1,7 @@
 # NeuroLens
 
+By **Muhammad Haroon Abbas** ([@RealHaroon](https://github.com/RealHaroon))
+
 Draw a digit and watch a small convolutional neural network classify it, layer by layer, in an
 interactive 3D scene. Every step of the forward pass is visible: input pixels, convolution
 kernels, feature maps, ReLU, max-pooling, flatten, dense neurons with their strongest weighted
@@ -187,3 +189,7 @@ docs/screenshots/
 | Phone layout | |
 |---|---|
 | <img src="docs/screenshots/mobile.png" alt="Phone layout" width="260"> | On narrow screens the panels stack and the 3D view opens on the first layers. Orbit, pinch-zoom and the layer buttons reach the rest; tap a cell to pin its tooltip. |
+
+## Author
+
+**Muhammad Haroon Abbas** · [github.com/RealHaroon](https://github.com/RealHaroon)

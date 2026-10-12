@@ -218,3 +218,8 @@ select { font: inherit; font-size: 0.85rem; padding: 0.3rem 0.4rem; border-radiu
   background: rgba(23, 26, 33, 0.9); color: #e6e8ec; border: 1px solid #2f3644;
 }
 .zoom-buttons button:hover { border-color: #6c9cff; }
+
+/* Footer credit */
+.site-footer { padding: 0.5rem 1rem 1.5rem; text-align: center; font-size: 0.85rem; color: var(--muted); }
+.site-footer a { color: var(--accent); text-decoration: none; }
+.site-footer a:hover { text-decoration: underline; }
