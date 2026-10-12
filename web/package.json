@@ -11,7 +11,8 @@
     "test:pipeline": "node test/pipeline.mjs",
     "test": "node test/parity.mjs && node test/pipeline.mjs && node test/scene-logic.mjs && node test/e2e.mjs",
     "test:e2e": "node test/e2e.mjs",
-    "test:scene": "node test/scene-logic.mjs"
+    "test:scene": "node test/scene-logic.mjs",
+    "screenshots": "node test/screenshots.mjs"
   },
   "dependencies": {
     "@tensorflow/tfjs-backend-cpu": "4.22.0",

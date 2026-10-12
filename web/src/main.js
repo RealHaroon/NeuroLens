@@ -3,6 +3,7 @@ import { loadModel } from './model.js';
 import { createInspector, STAGES } from './activations.js';
 import { canvasToGray, preprocess } from './preprocess.js';
 import { createDrawpad } from './drawpad.js';
+import { OVERVIEW, STEPS, paramsFor } from './ui/explain.js';
 
 const MAX_UPLOAD_DIM = 512;
 
@@ -88,6 +89,7 @@ async function infer() {
     renderLayerTable(null);
     scene3d?.update(null);
     lastResult = null;
+    renderAbout();
     setStatus('Draw a digit to begin');
     window.neurolens.last = null;
     return;
@@ -97,6 +99,7 @@ async function infer() {
   renderProbs(result.softmax.data);
   renderLayerTable(result);
   scene3d?.update(result);
+  renderAbout();
   const ms = performance.now() - t0;
   setStatus(`${tf.getBackend()} · ${ms.toFixed(1)} ms · ${tf.memory().numTensors} tensors`);
   window.neurolens.last = result;
@@ -175,6 +178,7 @@ async function boot() {
   renderProbs(null);
   renderLayerTable(null);
   setStatus('Draw a digit to begin');
+  renderAbout();
   await loadScene();
 }
 
@@ -186,8 +190,12 @@ const STATION_NAMES = {
 async function loadScene() {
   const sceneEl = $('scene');
   try {
-    const { createNetworkScene } = await import('./viz/scene.js');
-    scene3d = createNetworkScene(sceneEl, inspector);
+    const [{ createNetworkScene }, { createPlayer }] = await Promise.all([
+      import('./viz/scene.js'),
+      import('./ui/player.js'),
+    ]);
+    scene3d = createNetworkScene(sceneEl, inspector, { onFocus: setAbout });
+    player = createPlayer(scene3d, { onChange: renderPlayer });
     $('scene-status').remove();
   } catch (err) {
     console.error(err);
@@ -195,6 +203,7 @@ async function loadScene() {
     return;
   }
   window.neurolens.scene = scene3d;
+  window.neurolens.player = player;
   if (lastResult) scene3d.update(lastResult);
 
   const topk = $('topk');
@@ -204,20 +213,87 @@ async function loadScene() {
   };
   topk.addEventListener('input', syncTopK);
   syncTopK();
+
+  $('play').addEventListener('click', () => player.toggle());
+  $('step-back').addEventListener('click', () => player.step(-1));
+  $('step-forward').addEventListener('click', () => player.step(1));
+  $('speed').addEventListener('change', (e) => player.setSpeed(Number(e.target.value)));
+  $('kernel-slide').addEventListener('change', (e) => player.setKernelSlide(e.target.checked));
   $('unroll').addEventListener('click', async () => {
+    player.goto('flatten');
     await scene3d.focus('flatten');
     await scene3d.playFlatten();
   });
-  $('reset-view').addEventListener('click', () => scene3d.overview());
+  $('reset-view').addEventListener('click', () => {
+    player.stop();
+    scene3d.overview();
+  });
   $('stations').replaceChildren(
     ...scene3d.stations.map((id) => {
       const b = document.createElement('button');
       b.type = 'button';
+      b.dataset.station = id;
       b.textContent = STATION_NAMES[id];
-      b.addEventListener('click', () => scene3d.focus(id));
+      b.addEventListener('click', () => {
+        player.goto(id);
+        scene3d.focus(id);
+      });
       return b;
     }),
   );
+
+  // Keyboard: Space = play/pause, arrows = step (unless typing in a control).
+  window.addEventListener('keydown', (e) => {
+    if (e.target.closest('input, select, textarea') || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === ' ' && !e.target.closest('button')) {
+      e.preventDefault();
+      player.toggle();
+    } else if (e.key === 'ArrowRight') {
+      player.step(1);
+    } else if (e.key === 'ArrowLeft') {
+      player.step(-1);
+    }
+  });
+  renderPlayer(player.state());
+}
+
+// --- playback + explanation panel ----------------------------------------------
+let player = null;
+let aboutStation = null; // null = whole network
+
+function renderPlayer({ index, station, playing, atEnd }) {
+  const btn = $('play');
+  btn.classList.toggle('playing', playing);
+  const label = playing ? 'Pause' : index >= 0 && !atEnd ? 'Resume' : atEnd ? 'Replay forward pass' : 'Play forward pass';
+  $('play-label').textContent = label;
+  btn.setAttribute('aria-label', label);
+  $('step-back').disabled = index <= 0;
+  $('step-forward').disabled = atEnd;
+  $('play-status').textContent = index >= 0 ? `Layer ${index + 1} of ${scene3d.stations.length}: ${STATION_NAMES[station]}` : '';
+  // Playback (including the kernel slide, which frames two layers) drives the panel.
+  if (station && station !== aboutStation) setAbout(station);
+  for (const b of $('stations').children) {
+    if (b.dataset.station === station) b.setAttribute('aria-current', 'step');
+    else b.removeAttribute('aria-current');
+  }
+}
+
+function setAbout(station) {
+  aboutStation = station;
+  renderAbout();
+}
+
+function renderAbout() {
+  const info = aboutStation ? STEPS[aboutStation] : OVERVIEW;
+  const { total, parts } = paramsFor(info, inspector.spec);
+  $('about-title').textContent = info.title;
+  $('about-shape').textContent = info.shape;
+  $('about-params').textContent = total.toLocaleString();
+  const share = aboutStation && total ? ` (${((total / inspector.spec.totalParams) * 100).toFixed(1)}% of the model)` : '';
+  $('about-body').innerHTML =
+    info.body.map((p) => `<p>${p}</p>`).join('') +
+    (parts.length ? `<p class="param-parts">${parts.join('<br>')}${share}</p>` : '<p class="param-parts">No learned parameters.</p>');
+  $('about-live').innerHTML = lastResult ? info.live(lastResult) : 'Draw a digit to see live numbers for this layer.';
 }
 
 boot().catch((err) => {

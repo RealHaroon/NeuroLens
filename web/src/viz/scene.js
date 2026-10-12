@@ -18,6 +18,8 @@ import { convInbound, denseTopK, poolInbound, unflatten } from './connections.js
 const MAX_K = 32;
 const FLATTEN_SECONDS = 2.6;
 const FLY_SECONDS = 0.9;
+const SLIDE_SECONDS = 8;
+const DIM = 0.07; // brightness of stations the forward pass hasn't reached yet
 
 const STATION_LABELS = {
   input: ['Input', '28×28×1'],
@@ -30,7 +32,13 @@ const STATION_LABELS = {
   output: ['Output', '10 · softmax'],
 };
 
-export function createNetworkScene(container, inspector) {
+/**
+ * @param {HTMLElement} container
+ * @param {object} inspector from createInspector()
+ * @param {{onFocus?: (stationId: string | null) => void}} [options] onFocus fires when the
+ *   camera is sent to a station (null = overview), e.g. to update an explanation panel.
+ */
+export function createNetworkScene(container, inspector, { onFocus } = {}) {
   const L = buildLayout();
   const W = inspector.weights;
 
@@ -101,13 +109,22 @@ export function createNetworkScene(container, inspector) {
   outline.visible = false;
   scene.add(outline);
 
+  // Kernel-slide animation: the 3x3 window on the input and the active filter.
+  const edgeBox = new EdgesGeometry(new BoxGeometry(1, 1, 1));
+  const windowBox = new LineSegments(edgeBox, new LineBasicMaterial({ color: 0xfab219 }));
+  const kernelBox = new LineSegments(edgeBox, new LineBasicMaterial({ color: 0xfab219 }));
+  windowBox.visible = kernelBox.visible = false;
+  scene.add(windowBox, kernelBox);
+
   // --- labels --------------------------------------------------------------------
+  const stationLabels = {};
   for (const s of L.stations) {
     const [title, sub] = STATION_LABELS[s.id];
     const el = labelEl('scene-label station', `<strong>${title}</strong><span>${sub}</span>`);
     const obj = new CSS2DObject(el);
     obj.position.set(s.center[0], s.height / 2 + 7, 0);
     scene.add(obj);
+    stationLabels[s.id] = el;
   }
   const digitLabels = S.output.neurons.map(([x, y], d) => {
     const obj = new CSS2DObject(labelEl('scene-label digit', String(d)));
@@ -127,6 +144,46 @@ export function createNetworkScene(container, inspector) {
   tooltip.className = 'scene-tooltip';
   tooltip.hidden = true;
   container.append(tooltip);
+  const caption = document.createElement('div');
+  caption.className = 'scene-caption';
+  caption.hidden = true;
+  container.append(caption);
+
+  // --- station brightness (the forward pass "lights up" layer by layer) ----------
+  const parts = {
+    input: [grids.input.mesh],
+    conv1: [grids.conv1Kernels.mesh, grids.conv1.mesh],
+    pool1: [grids.pool1.mesh],
+    conv2: [grids.conv2Kernels.mesh, grids.conv2.mesh],
+    pool2: [grids.pool2.mesh],
+    flatten: [flatten.mesh],
+    dense1: [dense.mesh],
+    output: [output.mesh, bars],
+  };
+  const levels = Object.fromEntries(L.stations.map((s) => [s.id, 1]));
+  const targets = { ...levels };
+  const linkDim = { links1: 1, links2: 1 }; // dimmed while a dense unit is focused
+  let current = null;
+
+  /** Light stations up to and including `index` (in forward order); null lights everything. */
+  function setLit(index) {
+    current = index === null ? null : L.stations[index]?.id ?? null;
+    L.stations.forEach((s, i) => {
+      targets[s.id] = index === null || i <= index ? 1 : DIM;
+      stationLabels[s.id].classList.toggle('current', s.id === current);
+    });
+    invalidate();
+  }
+
+  function applyLevels() {
+    for (const [id, meshes] of Object.entries(parts)) {
+      for (const m of meshes) m.material.color.setScalar(levels[id]);
+      stationLabels[id].style.opacity = 0.25 + 0.75 * levels[id];
+    }
+    links1.material.opacity = Math.min(levels.flatten, levels.dense1) * linkDim.links1;
+    links2.material.opacity = Math.min(levels.dense1, levels.output) * linkDim.links2;
+    for (const l of [...digitLabels, ...probLabels]) l.element.style.opacity = 0.25 + 0.75 * levels.output;
+  }
 
   // --- data updates --------------------------------------------------------------
   let result = null;
@@ -265,7 +322,7 @@ export function createNetworkScene(container, inspector) {
   const canvas = renderer.domElement;
   canvas.addEventListener('pointermove', (e) => {
     pointer = { x: e.clientX, y: e.clientY };
-    if (e.buttons) return; // orbiting
+    if (e.buttons || slideAnim) return; // orbiting, or the kernel slide owns the highlight
     const key = keyOf(pickAt(e.clientX, e.clientY));
     if (!sameKey(key, hovered)) {
       hovered = key;
@@ -304,8 +361,8 @@ export function createNetworkScene(container, inspector) {
   function refreshFocus() {
     const hit = resolve(pinned ?? hovered);
     focusLinks.clear();
-    links1.material.opacity = 1;
-    links2.material.opacity = 1;
+    linkDim.links1 = 1;
+    linkDim.links2 = 1;
     if (!hit || !result) {
       outline.visible = false;
       tooltip.hidden = true;
@@ -408,7 +465,7 @@ export function createNetworkScene(container, inspector) {
         const to = anchor(hit, 'left');
         const max = maxContribution([set]);
         for (const e of set) pushLink(focusLinks, flattenAnchor(e.i), to, e.contribution, max, 0.35);
-        links1.material.opacity = 0.18;
+        linkDim.links1 = 0.18;
         return card(`dense1 · neuron ${j}`, [
           row('Weighted sum z', fmt(R.dense1.data[j])), row('Bias', fmt(W.dense1.bias[j])), row('After ReLU', fmt(R.relu3.data[j])),
         ], `Lines: the ${k} strongest of 784 inputs by |w·x|.`);
@@ -420,7 +477,7 @@ export function createNetworkScene(container, inspector) {
         const to = anchor(hit, 'left');
         const max = maxContribution([set]);
         for (const e of set) pushLink(focusLinks, anchor(dense.cell(e.i), 'right'), to, e.contribution, max, 0.35);
-        links2.material.opacity = 0.18;
+        linkDim.links2 = 0.18;
         return card(`Digit ${j}`, [row('Probability', `${(R.softmax.data[j] * 100).toFixed(2)}%`), row('Logit', fmt(R.dense2.data[j])), row('Bias', fmt(W.dense2.bias[j]))],
           `Softmax turns the 10 logits into probabilities. Lines: the ${k} strongest of 64 inputs.`);
       }
@@ -450,6 +507,12 @@ export function createNetworkScene(container, inspector) {
   }
 
   function overviewView() {
+    // In a portrait viewport the full 500-unit-wide network would be a thin strip,
+    // so start on the first layers instead; orbit/zoom/layer buttons reach the rest.
+    if (camera.aspect < 1) {
+      const box = stationBox(S.input).union(stationBox(S.pool1));
+      return viewFor(box, -0.3, 0.12, 1.0);
+    }
     const box = new Box3(new Vector3(0, -75, 0), new Vector3(L.width, 80, 2));
     return viewFor(box, -0.32, 0.2, 1.0);
   }
@@ -468,6 +531,7 @@ export function createNetworkScene(container, inspector) {
   }
 
   function focus(id, seconds) {
+    onFocus?.(id);
     const s = S[id];
     // Columns are tall and narrow; include some neighbours so the view isn't a sliver.
     const box = stationBox(s);
@@ -476,11 +540,22 @@ export function createNetworkScene(container, inspector) {
   }
 
   function overview(seconds) {
+    onFocus?.(null);
     return flyTo(overviewView(), seconds);
+  }
+
+  /** Frame several stations at once (e.g. input + conv1 for the kernel slide). */
+  function focusRange(ids, seconds) {
+    const box = new Box3();
+    for (const id of ids) box.union(stationBox(S[id]));
+    return flyTo(viewFor(box, -0.3, 0.1, 1.05), seconds);
   }
 
   // --- render loop -------------------------------------------------------------------------
   let flattenAnim = null;
+  let slideAnim = null;
+  let paused = false; // freezes the flatten/slide animations (playback pause)
+  let speed = 1;
   let last = performance.now();
   let renders = 0;
 
@@ -500,8 +575,9 @@ export function createNetworkScene(container, inspector) {
       active = true;
     }
     if (controls.update()) active = true;
-    if (flattenAnim) {
-      flattenAnim.t = Math.min(1, flattenAnim.t + dt / FLATTEN_SECONDS);
+    const adt = paused ? 0 : dt * speed;
+    if (flattenAnim && adt > 0) {
+      flattenAnim.t = Math.min(1, flattenAnim.t + adt / FLATTEN_SECONDS);
       flatten.setProgress(flattenAnim.t);
       links1.lines.visible = flattenAnim.t >= 1;
       if (flattenAnim.t >= 1) {
@@ -510,7 +586,23 @@ export function createNetworkScene(container, inspector) {
       }
       active = true;
     }
+    if (slideAnim && adt > 0) {
+      slideAnim.t = Math.min(1, slideAnim.t + adt / SLIDE_SECONDS);
+      if (!result || slideAnim.t >= 1) endSlide();
+      else stepSlide();
+      active = true;
+    }
+    for (const id in levels) {
+      const diff = targets[id] - levels[id];
+      if (Math.abs(diff) < 0.002) {
+        levels[id] = targets[id];
+        continue;
+      }
+      levels[id] += diff * Math.min(1, dt * 5);
+      active = true;
+    }
     if (needsRender || active) {
+      applyLevels();
       renderer.render(scene, camera);
       labelRenderer.render(scene, camera);
       needsRender = false;
@@ -519,13 +611,99 @@ export function createNetworkScene(container, inspector) {
   });
 
   function playFlatten() {
-    flattenAnim?.done();
+    cancelAnimations();
     hovered = null;
     pinned = null;
     refreshFocus();
     return new Promise((done) => {
       flattenAnim = { t: 0, done };
     });
+  }
+
+  /**
+   * Slide one conv1 filter's 3x3 window over the input, filling its feature map
+   * cell by cell. Defaults to the filter that responds most strongly to this input.
+   */
+  function playKernelSlide(channel) {
+    cancelAnimations();
+    hovered = null;
+    pinned = null;
+    refreshFocus();
+    if (!result) return Promise.resolve();
+    const ch = channel ?? strongestFilter();
+    return new Promise((done) => {
+      slideAnim = { t: 0, ch, done, masked: new Float32Array(result.conv1.data.length) };
+      stepSlide();
+    });
+  }
+
+  function strongestFilter() {
+    const sums = new Float32Array(8);
+    result.conv1.data.forEach((v, i) => {
+      if (v > 0) sums[i % 8] += v;
+    });
+    return argmax(sums);
+  }
+
+  function stepSlide() {
+    const a = slideAnim;
+    const data = result.conv1.data;
+    const done = Math.min(784, Math.floor(a.t * 785));
+    a.masked.set(data);
+    for (let i = done; i < 784; i++) a.masked[i * 8 + a.ch] = 0;
+    grids.conv1.update(a.masked, maxAbs(data));
+
+    const at = Math.min(783, done);
+    const r = Math.floor(at / 28);
+    const c = at % 28;
+    const inCell = grids.input.cell(0, r, c);
+    windowBox.position.set(inCell.center[0], inCell.center[1], 1);
+    windowBox.scale.set(3.05, 3.05, 2.4);
+    windowBox.visible = true;
+    const kp = S.conv1.layers.conv1Kernels[a.ch];
+    kernelBox.position.set(kp.x0 + kp.pitch, kp.y0 - kp.pitch, 0.6);
+    kernelBox.scale.set(3 * kp.pitch + 0.2, 3 * kp.pitch + 0.2, 1.4);
+    kernelBox.visible = true;
+
+    const out = grids.conv1.cell(a.ch, r, c);
+    outline.visible = true;
+    outline.position.set(...out.center);
+    outline.scale.set(out.size[0] * 1.15, out.size[1] * 1.15, out.size[2] * 1.15);
+    focusLinks.clear();
+    const inbound = convInbound(W.conv1, result.input, r, c, a.ch);
+    const maxC = Math.max(...inbound.map((e) => Math.abs(e.contribution)), 1e-9);
+    for (const e of inbound) {
+      const from = anchor(grids.input.cell(0, e.r, e.c), 'front');
+      if (e.contribution === 0) focusLinks.push(from, anchor(out, 'front'), MUTED, 0.5);
+      else pushLink(focusLinks, from, anchor(out, 'front'), e.contribution, maxC, 0.3);
+    }
+    focusLinks.commit();
+    const v = data[at * 8 + a.ch];
+    caption.innerHTML = `Filter ${a.ch} at row ${r}, col ${c}: Σ w·x + b = <b>${v.toFixed(3)}</b> → ReLU <b>${Math.max(0, v).toFixed(3)}</b>`;
+    caption.hidden = false;
+  }
+
+  function endSlide() {
+    const a = slideAnim;
+    slideAnim = null;
+    if (result) grids.conv1.update(result.conv1.data, maxAbs(result.conv1.data));
+    windowBox.visible = kernelBox.visible = false;
+    caption.hidden = true;
+    refreshFocus();
+    a.done();
+  }
+
+  /** Finish any running flatten/slide animation immediately. */
+  function cancelAnimations() {
+    if (flattenAnim) {
+      const { done } = flattenAnim;
+      flattenAnim = null;
+      flatten.setProgress(1);
+      links1.lines.visible = true;
+      done();
+    }
+    if (slideAnim) endSlide();
+    invalidate();
   }
 
   // --- sizing ---------------------------------------------------------------------------------
@@ -536,6 +714,7 @@ export function createNetworkScene(container, inspector) {
     labelRenderer.setSize(w, h);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
+    container.classList.toggle('compact', w < 640);
     invalidate();
   }
   const ro = new ResizeObserver(resize);
@@ -558,8 +737,18 @@ export function createNetworkScene(container, inspector) {
     update,
     setTopK,
     playFlatten,
+    playKernelSlide,
+    cancelAnimations,
     focus,
+    focusRange,
     overview,
+    setLit,
+    setSpeed(s) {
+      speed = s;
+    },
+    setPaused(p) {
+      paused = p;
+    },
     stations: L.stations.map((s) => s.id),
     layout: L,
     dispose() {
@@ -578,6 +767,9 @@ export function createNetworkScene(container, inspector) {
         const rect = canvas.getBoundingClientRect();
         return { x: rect.left + ((v.x + 1) / 2) * rect.width, y: rect.top + ((1 - v.y) / 2) * rect.height };
       },
+      levels: () => ({ ...levels }),
+      targets: () => ({ ...targets }),
+      sliding: () => !!slideAnim,
       stats: () => ({ renders, calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, links: links1.n + links2.n }),
       camera,
       controls,

@@ -3,7 +3,6 @@
 // predictions, the per-layer activations, and that tensors don't leak.
 //
 // Usage:  npm run test:e2e          (CHROME_PATH overrides the browser binary)
-//         SCREENSHOT_DIR=... saves screenshots of the light and dark themes.
 
 import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -13,7 +12,6 @@ import { build, preview } from 'vite';
 import puppeteer from 'puppeteer-core';
 
 const CHROME = process.env.CHROME_PATH ?? '/usr/bin/google-chrome';
-const SHOTS = process.env.SCREENSHOT_DIR;
 const root = fileURLToPath(new URL('..', import.meta.url));
 
 await build({ root, logLevel: 'warn' });
@@ -192,6 +190,68 @@ try {
   const unrollMs = Date.now() - t0;
   check(unrollMs > 2000 && unrollMs < 6000, `flatten unroll animation ran (${(unrollMs / 1000).toFixed(1)} s)`);
 
+  // --- Phase 4: playback, kernel slide, explanation panel ----------------------
+  console.log('Playback:');
+  const pstate = () => scene(() => window.neurolens.player.state());
+  const text = (sel) => page.$eval(sel, (el) => el.textContent.trim());
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await page.select('#speed', '4');
+  await page.click('#play');
+  await page.waitForFunction(() => window.neurolens.player.state().index === 2, { timeout: 10000 });
+  const lit = await scene(() => window.neurolens.scene.debug.targets());
+  const order = await scene(() => window.neurolens.scene.stations);
+  const litOk = order.every((id, i) => (i <= 2 ? lit[id] === 1 : lit[id] < 0.2));
+  check(litOk, `layers light up in order: at step 3 ${order.map((id) => (lit[id] === 1 ? id : '·')).join(' ')}`);
+  check((await text('#play-label')) === 'Pause', 'play button turns into Pause while playing');
+  check((await text('#about-title')).startsWith('ReLU + max-pool 1'), `about panel follows playback: "${await text('#about-title')}"`);
+
+  await page.click('#play'); // pause
+  const pausedAt = (await pstate()).index;
+  await sleep(1500);
+  const stillAt = (await pstate()).index;
+  check(pausedAt === stillAt && (await text('#play-label')) === 'Resume', `pause holds the current layer (${pausedAt} -> ${stillAt})`);
+  await page.click('#play'); // resume
+  await page.waitForFunction((i) => window.neurolens.player.state().index > i, { timeout: 10000 }, stillAt);
+  check(true, 'resume continues from where it paused');
+  await page.click('#step-back');
+  await frame();
+  const back = await pstate();
+  check(!back.playing && back.index === stillAt, `step back pauses and moves to layer ${back.index}`);
+  await page.keyboard.press('ArrowRight');
+  await frame();
+  check((await pstate()).index === back.index + 1, 'ArrowRight steps forward');
+
+  await page.click('#play');
+  await page.waitForFunction(() => !window.neurolens.player.state().playing, { timeout: 30000 });
+  const end = await pstate();
+  const allLit = Object.values(await scene(() => window.neurolens.scene.debug.targets())).every((v) => v === 1);
+  check(end.atEnd && allLit && (await text('#play-label')) === 'Replay forward pass', 'pass completes on the output with every layer lit');
+  check((await text('#about-live')).startsWith('Prediction 7'), `live fact: "${await text('#about-live')}"`);
+
+  console.log('Kernel slide:');
+  await page.select('#speed', '1');
+  await page.click('#kernel-slide');
+  await scene(() => window.neurolens.player.goto('input'));
+  await page.click('#step-forward'); // -> conv1 with the slide
+  await page.waitForFunction(() => window.neurolens.scene.debug.sliding(), { timeout: 5000 });
+  await sleep(2500);
+  const cap1 = await text('.scene-caption');
+  await sleep(1200);
+  const cap2 = await text('.scene-caption');
+  check(/^Filter \d at row \d+, col \d+/.test(cap1) && cap1 !== cap2, `window slides: "${cap1}" → "${cap2.slice(0, 26)}…"`);
+  await page.waitForFunction(() => !window.neurolens.scene.debug.sliding(), { timeout: 15000 });
+  check(await page.$eval('.scene-caption', (el) => el.hidden), 'slide finishes and restores the full feature maps');
+  await page.click('#kernel-slide');
+
+  console.log('About panel:');
+  for (const [id, title, params] of [['conv1', 'Convolution 1', '80'], ['conv2', 'Convolution 2', '1,168'], ['dense1', 'Dense 1 + ReLU', '50,240'], ['output', 'Output + softmax', '650'], ['pool1', 'ReLU + max-pool 1', '0']]) {
+    await page.click(`#stations button[data-station="${id}"]`);
+    await frame();
+    const t = await text('#about-title');
+    const p = await text('#about-params');
+    check(t === title && p === params, `${id}: "${t}", ${p} parameters`);
+  }
+
   // Frame pacing while orbiting the full network (reported, not asserted:
   // it depends on the GPU, and SwiftShader software rendering is far slower).
   await scene(() => window.neurolens.scene.overview(0));
@@ -219,31 +279,11 @@ try {
   });
   console.log(`  info frame time while orbiting: median ${perf.median.toFixed(1)} ms, p90 ${perf.p90.toFixed(1)} ms (${perf.gpu})`);
 
-  if (SHOTS) {
-    await scene(() => window.neurolens.scene.focus('conv1', 0));
-    await frame();
-    const p = await scene(() => window.neurolens.scene.debug.screenOf('conv1', 2, 9, 14));
-    await page.mouse.move(p.x, p.y);
-    await frame();
-    await page.screenshot({ path: join(SHOTS, 'phase3-hover-conv1.png') });
-    await scene(() => window.neurolens.scene.focus('dense1', 0));
-    await frame();
-    const d = await scene(() => window.neurolens.scene.debug.screenOf('dense1', 20));
-    await page.mouse.move(d.x, d.y);
-    await frame();
-    await page.screenshot({ path: join(SHOTS, 'phase3-hover-dense.png') });
-    await scene(() => window.neurolens.scene.overview(0));
-    await page.mouse.move(5, 5);
-    await frame();
-    await page.screenshot({ path: join(SHOTS, 'phase3-overview.png') });
-    await draw(cases[1][1]);
-    await page.screenshot({ path: join(SHOTS, 'phase2-light.png') });
-    await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'dark' }]);
-    await page.screenshot({ path: join(SHOTS, 'phase2-dark.png') });
-    await page.setViewport({ width: 390, height: 844, isMobile: true });
-    await page.screenshot({ path: join(SHOTS, 'phase2-mobile.png'), fullPage: true });
-    console.log(`Screenshots saved to ${SHOTS}`);
-  }
+  // Responsive: no horizontal scroll at phone width.
+  await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true });
+  await page.waitForFunction(() => window.neurolens?.ready, { timeout: 20000 });
+  const overflow = await scene(() => document.documentElement.scrollWidth - window.innerWidth);
+  check(overflow <= 0, `no horizontal scroll at 390px (overflow ${overflow}px)`);
 
   check(errors.length === 0, `no console errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
 } finally {

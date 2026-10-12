@@ -46,14 +46,45 @@
 
       <section id="stage" class="stage">
         <div class="toolbar panel">
-          <label class="control">
-            <span>Connections per neuron</span>
-            <input id="topk" type="range" min="1" max="32" value="8" />
-            <output id="topk-value" for="topk">8</output>
-          </label>
-          <button id="unroll" type="button">Unroll flatten</button>
-          <button id="reset-view" type="button">Reset view</button>
-          <nav id="stations" class="stations" aria-label="Jump to layer"></nav>
+          <div class="toolbar-row">
+            <div class="transport" role="group" aria-label="Forward pass playback">
+              <button id="step-back" type="button" class="icon" aria-label="Previous layer" title="Previous layer (←)">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5v14M18 5 9 12l9 7z" /></svg>
+              </button>
+              <button id="play" type="button" class="primary" aria-label="Play forward pass" title="Play / pause (Space)">
+                <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l12-7.5z" /></svg>
+                <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" /></svg>
+                <span id="play-label">Play forward pass</span>
+              </button>
+              <button id="step-forward" type="button" class="icon" aria-label="Next layer" title="Next layer (→)">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 5v14M6 5l9 7-9 7z" /></svg>
+              </button>
+            </div>
+            <label class="control">
+              <span>Speed</span>
+              <select id="speed">
+                <option value="0.5">0.5×</option>
+                <option value="1" selected>1×</option>
+                <option value="2">2×</option>
+                <option value="4">4×</option>
+              </select>
+            </label>
+            <label class="control check">
+              <input id="kernel-slide" type="checkbox" />
+              <span>Kernel slide</span>
+            </label>
+            <span id="play-status" class="play-status" aria-live="polite"></span>
+          </div>
+          <div class="toolbar-row">
+            <label class="control">
+              <span>Connections per neuron</span>
+              <input id="topk" type="range" min="1" max="32" value="8" />
+              <output id="topk-value" for="topk">8</output>
+            </label>
+            <button id="unroll" type="button">Unroll flatten</button>
+            <button id="reset-view" type="button">Reset view</button>
+            <nav id="stations" class="stations" aria-label="Jump to layer"></nav>
+          </div>
         </div>
         <div id="scene" class="scene">
           <div id="scene-status" class="scene-status">Loading 3D view…</div>
@@ -67,6 +98,17 @@
           </table>
         </details>
       </section>
+
+      <aside id="about" class="panel about-panel" aria-live="polite">
+        <h2>About this layer</h2>
+        <h3 id="about-title">The whole network</h3>
+        <dl class="facts">
+          <div><dt>Output shape</dt><dd id="about-shape">–</dd></div>
+          <div><dt>Parameters</dt><dd id="about-params">–</dd></div>
+        </dl>
+        <div id="about-body" class="about-body"></div>
+        <p id="about-live" class="about-live"></p>
+      </aside>
     </main>
 
     <script type="module" src="./src/main.js"></script>
