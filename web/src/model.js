@@ -1,7 +1,7 @@
 // Rebuilds the trained Keras CNN in TF.js from the JSON written by
 // training/export_weights.py, then loads the exported weights into it.
 
-import * as tf from '@tensorflow/tfjs';
+import * as tf from './tf.js';
 
 export const MODEL_FORMAT = 'neurolens-weights-v1';
 

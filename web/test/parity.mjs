@@ -5,7 +5,7 @@
 // Usage:  npm run test:parity
 
 import { readFileSync } from 'node:fs';
-import * as tf from '@tensorflow/tfjs';
+import * as tf from '../src/tf.js';
 import { buildModel, decodeArray, decodeTensor } from '../src/model.js';
 
 const ACTIVATION_TOL = 1e-4;
@@ -20,7 +20,7 @@ const images = decodeTensor(parity.images);
 
 // 1. Predictions + probabilities for all images.
 const probs = model.predict(images);
-const jsPred = Array.from(probs.argMax(1).dataSync());
+const jsPred = Array.from(tf.argMax(probs, 1).dataSync());
 const probDiff = maxAbsDiff(probs.dataSync(), decodeArray(parity.probabilities));
 const mismatches = jsPred.filter((p, i) => p !== parity.predictions[i]).length;
 
@@ -32,7 +32,7 @@ console.log(`Prediction mismatches: ${mismatches}/${parity.count}, max |Δprob| 
 if (mismatches > 0 || probDiff > ACTIVATION_TOL) failed = true;
 
 // 2. Every intermediate activation, layer by layer, for the first few images.
-let x = images.slice(0, parity.layerImages);
+let x = tf.slice(images, 0, parity.layerImages);
 for (const { name } of spec.layers) {
   const next = model.getLayer(name).apply(x);
   x.dispose();

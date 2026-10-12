@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>NeuroLens</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3E%3Crect width=%2716%27 height=%2716%27 rx=%273%27 fill=%27%232f6fde%27/%3E%3Ccircle cx=%275%27 cy=%278%27 r=%271.6%27 fill=%27white%27/%3E%3Ccircle cx=%2711%27 cy=%274.5%27 r=%271.6%27 fill=%27white%27/%3E%3Ccircle cx=%2711%27 cy=%2711.5%27 r=%271.6%27 fill=%27white%27/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>NeuroLens</h1>
+      <span class="tagline">A small CNN's forward pass, layer by layer</span>
+      <span id="status" class="status">Loading model…</span>
+    </header>
+
+    <main class="layout">
+      <aside class="panel input-panel">
+        <section>
+          <h2>Draw a digit</h2>
+          <canvas id="drawpad" width="280" height="280" aria-label="Drawing canvas"></canvas>
+          <div class="row">
+            <button id="clear" type="button">Clear</button>
+            <label class="button" for="upload">Upload image</label>
+            <input id="upload" type="file" accept="image/*" hidden />
+          </div>
+        </section>
+
+        <section>
+          <h2>What the model sees</h2>
+          <div class="preview-row">
+            <canvas id="preview" width="28" height="28" aria-label="Preprocessed 28 by 28 input"></canvas>
+            <p class="hint">
+              Grayscale, inverted if needed, cropped, scaled to 20×20 and centered by mass
+              in a 28×28 frame, exactly like MNIST.
+            </p>
+          </div>
+        </section>
+
+        <section>
+          <h2>Prediction</h2>
+          <ol id="probs" class="probs"></ol>
+        </section>
+      </aside>
+
+      <section id="stage" class="stage">
+        <div id="scene" class="scene"></div>
+        <div class="panel layer-table-wrap">
+          <h2>Layer outputs</h2>
+          <table id="layers" class="layer-table">
+            <thead><tr><th>Layer</th><th>Shape</th><th>Min</th><th>Max</th><th>Mean</th><th>Zeros</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>

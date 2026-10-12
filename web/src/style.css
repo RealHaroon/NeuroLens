@@ -1,0 +1,100 @@
+:root {
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --border: #dde0e6;
+  --text: #1b1e24;
+  --muted: #5d6573;
+  --accent: #2f6fde;
+  --accent-soft: #dbe6fb;
+  --bar: #c7cdd8;
+  --radius: 10px;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #0f1115;
+    --surface: #171a21;
+    --border: #2a2f3a;
+    --text: #e6e8ec;
+    --muted: #98a0ae;
+    --accent: #6c9cff;
+    --accent-soft: #23314f;
+    --bar: #3a4150;
+  }
+}
+:root[data-theme='dark'] {
+  --bg: #0f1115;
+  --surface: #171a21;
+  --border: #2a2f3a;
+  --text: #e6e8ec;
+  --muted: #98a0ae;
+  --accent: #6c9cff;
+  --accent-soft: #23314f;
+  --bar: #3a4150;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); min-height: 100vh; }
+h1 { font-size: 1.15rem; margin: 0; }
+h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 0.6rem; }
+
+.topbar {
+  display: flex; align-items: baseline; gap: 0.9rem; flex-wrap: wrap;
+  padding: 0.8rem 1rem; border-bottom: 1px solid var(--border); background: var(--surface);
+}
+.tagline { color: var(--muted); font-size: 0.9rem; }
+.status { margin-left: auto; font-size: 0.85rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.layout {
+  display: grid; grid-template-columns: 320px 1fr; gap: 1rem; padding: 1rem;
+  max-width: 1600px; margin: 0 auto;
+}
+@media (max-width: 800px) {
+  .layout { grid-template-columns: 1fr; padding: 0.75rem 16px; }
+}
+
+.panel {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem;
+}
+.input-panel { display: flex; flex-direction: column; gap: 1.25rem; align-self: start; }
+
+#drawpad {
+  width: 100%; max-width: 280px; aspect-ratio: 1; display: block; border-radius: 8px;
+  touch-action: none; cursor: crosshair; background: #000;
+}
+.row { display: flex; gap: 0.5rem; margin-top: 0.6rem; }
+button, .button {
+  font: inherit; font-size: 0.9rem; padding: 0.45rem 0.9rem; border-radius: 7px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text);
+}
+button:hover, .button:hover { border-color: var(--accent); }
+button:focus-visible, .button:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.preview-row { display: flex; gap: 0.8rem; align-items: center; }
+#preview {
+  width: 112px; height: 112px; flex: none; image-rendering: pixelated; border-radius: 6px;
+  background: #000; border: 1px solid var(--border);
+}
+.hint { margin: 0; font-size: 0.8rem; color: var(--muted); line-height: 1.4; }
+
+.probs { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.probs li { display: grid; grid-template-columns: 1.2rem 1fr 3.4rem; align-items: center; gap: 0.5rem; font-variant-numeric: tabular-nums; font-size: 0.85rem; }
+.probs .digit { font-weight: 600; text-align: center; }
+.probs .track { height: 10px; background: var(--bg); border-radius: 5px; overflow: hidden; }
+.probs .fill { height: 100%; width: 0; background: var(--bar); border-radius: 5px; transition: width 120ms ease-out; }
+.probs .pct { text-align: right; color: var(--muted); }
+.probs li.top .fill { background: var(--accent); }
+.probs li.top .digit, .probs li.top .pct { color: var(--accent); }
+
+.stage { display: flex; flex-direction: column; gap: 1rem; min-width: 0; }
+.scene { min-height: 360px; flex: 1; border-radius: var(--radius); border: 1px dashed var(--border); }
+
+.layer-table-wrap { overflow-x: auto; }
+.layer-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+.layer-table th, .layer-table td { text-align: right; padding: 0.3rem 0.6rem; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.layer-table th:first-child, .layer-table td:first-child,
+.layer-table th:nth-child(2), .layer-table td:nth-child(2) { text-align: left; }
+.layer-table th { color: var(--muted); font-weight: 500; }
