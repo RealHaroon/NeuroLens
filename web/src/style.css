@@ -89,10 +89,62 @@ button:focus-visible, .button:focus-within { outline: 2px solid var(--accent); o
 .probs li.top .fill { background: var(--accent); }
 .probs li.top .digit, .probs li.top .pct { color: var(--accent); }
 
-.stage { display: flex; flex-direction: column; gap: 1rem; min-width: 0; }
-.scene { min-height: 360px; flex: 1; border-radius: var(--radius); border: 1px dashed var(--border); }
+.stage { display: flex; flex-direction: column; gap: 0.75rem; min-width: 0; }
+
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem 1rem; padding: 0.6rem 0.8rem; }
+.control { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; color: var(--muted); }
+.control input[type='range'] { width: 120px; accent-color: var(--accent); }
+.control output { min-width: 1.5rem; color: var(--text); font-variant-numeric: tabular-nums; font-weight: 600; }
+.stations { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-left: auto; }
+.stations button { font-size: 0.78rem; padding: 0.25rem 0.55rem; }
+
+/* The 3D viewport is a dark display surface in both themes (see viz/colors.js). */
+.scene {
+  position: relative; height: clamp(420px, calc(100vh - 210px), 900px); border-radius: var(--radius);
+  overflow: hidden; background: #0e1117; border: 1px solid var(--border);
+}
+@media (max-width: 800px) { .scene { height: 70vh; min-height: 360px; } }
+.scene-canvas { display: block; touch-action: none; }
+.scene-labels { position: absolute; inset: 0; pointer-events: none; }
+.scene-status { position: absolute; inset: 0; display: grid; place-items: center; color: #98a0ae; font-size: 0.9rem; }
+.scene-hint { margin: -0.25rem 0 0; font-size: 0.78rem; color: var(--muted); }
+
+.scene-label { color: #c9d1dc; font-size: 12px; text-align: center; white-space: nowrap; text-shadow: 0 1px 3px #000; }
+.scene-label.station { display: flex; flex-direction: column; gap: 1px; }
+.scene-label.station strong { font-size: 13px; font-weight: 600; color: #e6e8ec; }
+.scene-label.station span { color: #8f99aa; font-variant-numeric: tabular-nums; }
+.scene-label.digit { font-size: 15px; font-weight: 600; color: #8f99aa; }
+.scene-label.prob { font-variant-numeric: tabular-nums; color: #8f99aa; transform-origin: left; }
+.scene-label.top { color: #cde2fb; font-weight: 700; }
+.scene-label.digit.top { font-size: 18px; }
+
+.scene-tooltip {
+  position: absolute; top: 0; left: 0; z-index: 2; min-width: 190px; max-width: 280px; pointer-events: none;
+  padding: 0.55rem 0.7rem; border-radius: 8px; font-size: 12px; line-height: 1.45;
+  background: rgba(23, 26, 33, 0.94); color: #e6e8ec; border: 1px solid #2f3644; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+}
+.scene-tooltip.pinned { border-color: #6c9cff; }
+.tt-title { font-weight: 600; margin-bottom: 0.3rem; }
+.tt-row { display: flex; justify-content: space-between; gap: 1rem; font-variant-numeric: tabular-nums; }
+.tt-row span { color: #98a0ae; }
+.tt-note { margin-top: 0.35rem; color: #98a0ae; }
+
+.scene-legend {
+  position: absolute; left: 10px; bottom: 10px; display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; max-width: calc(100% - 20px);
+  padding: 0.5rem 0.65rem; border-radius: 8px; background: rgba(14, 17, 23, 0.82); color: #98a0ae; font-size: 11px; pointer-events: none;
+}
+.lg-item { display: flex; flex-direction: column; gap: 3px; min-width: 110px; }
+.lg-caption { color: #c9d1dc; }
+.lg-ramp { height: 7px; border-radius: 4px; }
+.lg-ticks { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; }
+.lg-links i { display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin: 0 2px 0 4px; }
+.lg-pos { background: #e5634a; }
+.lg-neg { background: #3987e5; }
+@media (max-width: 800px) { .scene-legend { display: none; } }
 
 .layer-table-wrap { overflow-x: auto; }
+.layer-table-wrap summary { cursor: pointer; font-size: 0.85rem; color: var(--muted); }
+.layer-table-wrap[open] summary { margin-bottom: 0.6rem; }
 .layer-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; font-variant-numeric: tabular-nums; }
 .layer-table th, .layer-table td { text-align: right; padding: 0.3rem 0.6rem; border-bottom: 1px solid var(--border); white-space: nowrap; }
 .layer-table th:first-child, .layer-table td:first-child,

@@ -11,6 +11,8 @@ const statusEl = $('status');
 const previewCtx = $('preview').getContext('2d');
 
 let inspector = null;
+let scene3d = null; // loaded lazily so the input panel works before three.js arrives
+let lastResult = null;
 let source = null; // canvas the next inference reads from (drawpad or uploaded image)
 
 const drawpad = createDrawpad($('drawpad'), {
@@ -84,13 +86,17 @@ async function infer() {
   if (empty) {
     renderProbs(null);
     renderLayerTable(null);
+    scene3d?.update(null);
+    lastResult = null;
     setStatus('Draw a digit to begin');
     window.neurolens.last = null;
     return;
   }
   const result = await inspector.run(image);
+  lastResult = result;
   renderProbs(result.softmax.data);
   renderLayerTable(result);
+  scene3d?.update(result);
   const ms = performance.now() - t0;
   setStatus(`${tf.getBackend()} · ${ms.toFixed(1)} ms · ${tf.memory().numTensors} tensors`);
   window.neurolens.last = result;
@@ -169,6 +175,49 @@ async function boot() {
   renderProbs(null);
   renderLayerTable(null);
   setStatus('Draw a digit to begin');
+  await loadScene();
+}
+
+const STATION_NAMES = {
+  input: 'Input', conv1: 'Conv1', pool1: 'Pool1', conv2: 'Conv2', pool2: 'Pool2',
+  flatten: 'Flatten', dense1: 'Dense', output: 'Output',
+};
+
+async function loadScene() {
+  const sceneEl = $('scene');
+  try {
+    const { createNetworkScene } = await import('./viz/scene.js');
+    scene3d = createNetworkScene(sceneEl, inspector);
+    $('scene-status').remove();
+  } catch (err) {
+    console.error(err);
+    $('scene-status').textContent = `3D view unavailable: ${err.message}`;
+    return;
+  }
+  window.neurolens.scene = scene3d;
+  if (lastResult) scene3d.update(lastResult);
+
+  const topk = $('topk');
+  const syncTopK = () => {
+    $('topk-value').textContent = topk.value;
+    scene3d.setTopK(Number(topk.value));
+  };
+  topk.addEventListener('input', syncTopK);
+  syncTopK();
+  $('unroll').addEventListener('click', async () => {
+    await scene3d.focus('flatten');
+    await scene3d.playFlatten();
+  });
+  $('reset-view').addEventListener('click', () => scene3d.overview());
+  $('stations').replaceChildren(
+    ...scene3d.stations.map((id) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = STATION_NAMES[id];
+      b.addEventListener('click', () => scene3d.focus(id));
+      return b;
+    }),
+  );
 }
 
 boot().catch((err) => {

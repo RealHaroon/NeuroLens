@@ -45,14 +45,27 @@
       </aside>
 
       <section id="stage" class="stage">
-        <div id="scene" class="scene"></div>
-        <div class="panel layer-table-wrap">
-          <h2>Layer outputs</h2>
+        <div class="toolbar panel">
+          <label class="control">
+            <span>Connections per neuron</span>
+            <input id="topk" type="range" min="1" max="32" value="8" />
+            <output id="topk-value" for="topk">8</output>
+          </label>
+          <button id="unroll" type="button">Unroll flatten</button>
+          <button id="reset-view" type="button">Reset view</button>
+          <nav id="stations" class="stations" aria-label="Jump to layer"></nav>
+        </div>
+        <div id="scene" class="scene">
+          <div id="scene-status" class="scene-status">Loading 3D view…</div>
+        </div>
+        <p class="scene-hint">Drag to orbit · right-drag to pan · scroll to zoom · hover a cell or neuron for its value · click to pin · double-click to focus a layer</p>
+        <details class="panel layer-table-wrap">
+          <summary>Layer outputs (numbers)</summary>
           <table id="layers" class="layer-table">
             <thead><tr><th>Layer</th><th>Shape</th><th>Min</th><th>Max</th><th>Mean</th><th>Zeros</th></tr></thead>
             <tbody></tbody>
           </table>
-        </div>
+        </details>
       </section>
     </main>
 

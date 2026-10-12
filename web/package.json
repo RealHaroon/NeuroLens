@@ -4,13 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview",
+    "dev": "node node_modules/vite/bin/vite.js",
+    "build": "node node_modules/vite/bin/vite.js build",
+    "preview": "node node_modules/vite/bin/vite.js preview",
     "test:parity": "node test/parity.mjs",
     "test:pipeline": "node test/pipeline.mjs",
-    "test": "node test/parity.mjs && node test/pipeline.mjs && node test/e2e.mjs",
-    "test:e2e": "node test/e2e.mjs"
+    "test": "node test/parity.mjs && node test/pipeline.mjs && node test/scene-logic.mjs && node test/e2e.mjs",
+    "test:e2e": "node test/e2e.mjs",
+    "test:scene": "node test/scene-logic.mjs"
   },
   "dependencies": {
     "@tensorflow/tfjs-backend-cpu": "4.22.0",

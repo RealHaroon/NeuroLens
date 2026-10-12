@@ -20,7 +20,8 @@ await build({ root, logLevel: 'warn' });
 const server = await preview({ root, preview: { port: 4174, strictPort: true }, logLevel: 'warn' });
 const url = server.resolvedUrls.local[0];
 
-const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox'] });
+const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, // Use the real GPU when there is one (falls back to SwiftShader otherwise).
+  args: ['--no-sandbox', '--use-angle=gl', '--enable-unsafe-swiftshader'] });
 let failed = false;
 const check = (ok, msg) => {
   if (!ok) failed = true;
@@ -128,7 +129,7 @@ try {
   writeFileSync(file, Buffer.from(dataUrl.split(',')[1], 'base64'));
   await (await page.$('#upload')).uploadFile(file);
   await page.waitForFunction(() => window.neurolens.last, { timeout: 5000 });
-  await page.waitForFunction((prev) => window.neurolens.last?.softmax.data[7] > 0.5, { timeout: 5000 }).catch(() => {});
+  await page.waitForFunction(() => window.neurolens.last?.softmax.data[7] > 0.5, { timeout: 5000 }).catch(() => {});
   const up = await page.evaluate(() => {
     const p = Array.from(window.neurolens.last.softmax.data);
     return { pred: p.indexOf(Math.max(...p)), conf: Math.max(...p) };
@@ -136,7 +137,105 @@ try {
   console.log('Upload:');
   check(up.pred === parity.labels[0], `dark-on-white upload -> predicted ${up.pred} (${(up.conf * 100).toFixed(1)}%), label ${parity.labels[0]}`);
 
+  // --- 3D scene -------------------------------------------------------------
+  console.log('3D scene:');
+  await page.waitForFunction(() => window.neurolens.scene, { timeout: 20000 });
+  await draw(cases[1][1]); // a 7
+  const scene = (fn, ...args) => page.evaluate(fn, ...args);
+  const stats = () => scene(() => window.neurolens.scene.debug.stats());
+  const frame = () => scene(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  let st = await stats();
+  check(st.calls <= 20, `whole network in ${st.calls} draw calls (instanced), ${st.triangles.toLocaleString()} triangles`);
+  check(st.links === 64 * 8 + 10 * 8, `top-8 connections drawn: ${st.links} lines (64×8 + 10×8)`);
+
+  await scene(() => {
+    const el = document.getElementById('topk');
+    el.value = '3';
+    el.dispatchEvent(new Event('input'));
+  });
+  st = await stats();
+  check(st.links === 64 * 3 + 10 * 3, `k slider = 3 -> ${st.links} lines`);
+  await scene(() => {
+    const el = document.getElementById('topk');
+    el.value = '8';
+    el.dispatchEvent(new Event('input'));
+  });
+
+  async function hover(station, layer, args, expect) {
+    await scene((id) => window.neurolens.scene.focus(id, 0), station);
+    await frame();
+    const pos = await scene((l, a) => window.neurolens.scene.debug.screenOf(l, ...a), layer, args);
+    await page.mouse.move(pos.x, pos.y);
+    await frame();
+    const tip = await page.$eval('.scene-tooltip', (el) => (el.hidden ? '' : el.textContent));
+    check(tip.includes(expect), `hover ${layer}(${args.join(', ')}) -> tooltip "${tip.slice(0, 60)}…"`);
+    return pos;
+  }
+  await hover('conv1', 'conv1', [3, 10, 12], 'conv1 · filter 3 · (10, 12)');
+  await hover('pool1', 'pool1', [5, 4, 6], 'pool1 · map 5 · (4, 6)');
+  await hover('conv2', 'conv2', [12, 7, 3], 'conv2 · filter 12 · (7, 3)');
+  await hover('flatten', 'flatten', [100], 'flatten[100]');
+  await hover('dense1', 'dense1', [10], 'dense1 · neuron 10');
+  const out7 = await hover('output', 'output', [7], 'Digit 7');
+
+  await page.mouse.click(out7.x, out7.y);
+  await page.mouse.move(out7.x - 300, out7.y - 200);
+  await frame();
+  const pinned = await page.$eval('.scene-tooltip', (el) => !el.hidden && el.classList.contains('pinned'));
+  await page.keyboard.press('Escape');
+  await frame();
+  const cleared = await page.$eval('.scene-tooltip', (el) => el.hidden);
+  check(pinned && cleared, 'click pins the tooltip, Escape clears it');
+
+  const t0 = Date.now();
+  await scene(() => window.neurolens.scene.playFlatten());
+  const unrollMs = Date.now() - t0;
+  check(unrollMs > 2000 && unrollMs < 6000, `flatten unroll animation ran (${(unrollMs / 1000).toFixed(1)} s)`);
+
+  // Frame pacing while orbiting the full network (reported, not asserted:
+  // it depends on the GPU, and SwiftShader software rendering is far slower).
+  await scene(() => window.neurolens.scene.overview(0));
+  const canvasBox = await (await page.$('.scene-canvas')).boundingBox();
+  await scene(() => {
+    window.__frames = [];
+    const loop = (t) => {
+      window.__frames.push(t);
+      if (window.__frames.length < 400) requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+  });
+  const cx = canvasBox.x + canvasBox.width / 2;
+  const cy = canvasBox.y + canvasBox.height / 2;
+  await page.mouse.move(cx, cy);
+  await page.mouse.down();
+  for (let i = 0; i < 60; i++) await page.mouse.move(cx + Math.sin(i / 8) * 200, cy + Math.cos(i / 8) * 60);
+  await page.mouse.up();
+  const perf = await scene(() => {
+    const f = window.__frames;
+    const d = f.slice(1).map((t, i) => t - f[i]).sort((a, b) => a - b);
+    const gl = document.querySelector('.scene-canvas').getContext('webgl2');
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    return { median: d[Math.floor(d.length / 2)], p90: d[Math.floor(d.length * 0.9)], gpu: ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : '?' };
+  });
+  console.log(`  info frame time while orbiting: median ${perf.median.toFixed(1)} ms, p90 ${perf.p90.toFixed(1)} ms (${perf.gpu})`);
+
   if (SHOTS) {
+    await scene(() => window.neurolens.scene.focus('conv1', 0));
+    await frame();
+    const p = await scene(() => window.neurolens.scene.debug.screenOf('conv1', 2, 9, 14));
+    await page.mouse.move(p.x, p.y);
+    await frame();
+    await page.screenshot({ path: join(SHOTS, 'phase3-hover-conv1.png') });
+    await scene(() => window.neurolens.scene.focus('dense1', 0));
+    await frame();
+    const d = await scene(() => window.neurolens.scene.debug.screenOf('dense1', 20));
+    await page.mouse.move(d.x, d.y);
+    await frame();
+    await page.screenshot({ path: join(SHOTS, 'phase3-hover-dense.png') });
+    await scene(() => window.neurolens.scene.overview(0));
+    await page.mouse.move(5, 5);
+    await frame();
+    await page.screenshot({ path: join(SHOTS, 'phase3-overview.png') });
     await draw(cases[1][1]);
     await page.screenshot({ path: join(SHOTS, 'phase2-light.png') });
     await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'dark' }]);
