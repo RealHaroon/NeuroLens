@@ -5,7 +5,7 @@
 // changes, or an animation is running, which keeps an idle laptop cool.
 
 import {
-  AmbientLight, Box3, BoxGeometry, Color, DirectionalLight, EdgesGeometry, LineBasicMaterial,
+  AmbientLight, Box3, BoxGeometry, Color, DirectionalLight, EdgesGeometry, LineBasicMaterial, MOUSE, TOUCH,
   LineSegments, PerspectiveCamera, Plane, Raycaster, Scene, Vector2, Vector3, WebGLRenderer,
 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -68,6 +68,17 @@ export function createNetworkScene(container, inspector, { onFocus } = {}) {
   controls.screenSpacePanning = true;
   controls.minDistance = 8;
   controls.maxDistance = 1600;
+  // The network reads left to right, so dragging slides the view (pan) like a map;
+  // rotating is the deliberate action (right-drag, Shift/Ctrl+drag, or "Rotate" mode).
+  // Wheel and pinch zoom are handled below, not by OrbitControls.
+  controls.enableZoom = true; // still needed for two-finger touch pinch
+  setDragMode('move');
+
+  function setDragMode(mode) {
+    const rotate = mode === 'rotate';
+    controls.mouseButtons = { LEFT: rotate ? MOUSE.ROTATE : MOUSE.PAN, MIDDLE: MOUSE.DOLLY, RIGHT: rotate ? MOUSE.PAN : MOUSE.ROTATE };
+    controls.touches = { ONE: rotate ? TOUCH.ROTATE : TOUCH.PAN, TWO: TOUCH.DOLLY_PAN };
+  }
 
   let needsRender = true;
   const invalidate = () => {
@@ -499,7 +510,25 @@ export function createNetworkScene(container, inspector, { onFocus } = {}) {
     const hfov = 2 * Math.atan(Math.tan(vfov / 2) * camera.aspect);
     const dist = margin * Math.max(size.y / 2 / Math.tan(vfov / 2), size.x / 2 / Math.tan(hfov / 2)) + size.z;
     const dir = new Vector3(Math.sin(azimuth) * Math.cos(elevation), Math.sin(elevation), Math.cos(azimuth) * Math.cos(elevation));
-    return { position: center.clone().addScaledVector(dir, dist), target: center };
+    // The estimate above ignores perspective: viewed at an angle, the near end of a wide box
+    // looms larger. Back off until every corner projects inside the frame.
+    const probe = camera.clone();
+    const corners = [];
+    for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) corners.push(new Vector3(x, y, z));
+    const v = new Vector3();
+    let d = dist;
+    for (let i = 0; i < 30; i++) {
+      probe.position.copy(center).addScaledVector(dir, d);
+      probe.lookAt(center);
+      probe.updateMatrixWorld();
+      const fits = corners.every((c) => {
+        v.copy(c).project(probe);
+        return Math.abs(v.x) <= 0.96 && Math.abs(v.y) <= 0.96 && v.z < 1;
+      });
+      if (fits) break;
+      d *= 1.08;
+    }
+    return { position: center.clone().addScaledVector(dir, d), target: center };
   }
 
   function stationBox(s) {
@@ -550,6 +579,80 @@ export function createNetworkScene(container, inspector, { onFocus } = {}) {
     for (const id of ids) box.union(stationBox(S[id]));
     return flyTo(viewFor(box, -0.3, 0.1, 1.05), seconds);
   }
+
+  // --- wheel, trackpad and pinch -----------------------------------------------------
+  // Captured on the container so OrbitControls' own wheel zoom never runs.
+  //  - pinch on a trackpad arrives as ctrl+wheel (Chrome, Edge, Firefox): zoom at the cursor
+  //  - two-finger scroll on a trackpad: slide the view
+  //  - a mouse wheel (line mode, or whole 100/120-px notches): zoom at the cursor
+  //  - Safari sends gesture* events for pinch instead
+  const tmpPoint = new Vector3();
+  const tmpOffset = new Vector3();
+  let lastTrackpadAt = -Infinity;
+
+  /** Zoom by `factor` (<1 = closer), keeping the point under (clientX, clientY) fixed on screen. */
+  function zoomAt(factor, clientX, clientY) {
+    fly = null;
+    const dist = camera.position.distanceTo(controls.target);
+    factor = clamp(factor, controls.minDistance / dist, controls.maxDistance / dist);
+    let anchorPoint = controls.target;
+    if (clientX !== undefined) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      ndc.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+      raycaster.setFromCamera(ndc, camera);
+      plane.constant = 0;
+      if (raycaster.ray.intersectPlane(plane, tmpPoint) && tmpPoint.distanceTo(camera.position) < controls.maxDistance * 2) {
+        anchorPoint = tmpPoint;
+      }
+    }
+    const p = anchorPoint.clone();
+    camera.position.sub(p).multiplyScalar(factor).add(p);
+    controls.target.sub(p).multiplyScalar(factor).add(p);
+    controls.update();
+    invalidate();
+  }
+
+  /** Slide the view by a screen-space amount in pixels. */
+  function panBy(dxPx, dyPx) {
+    fly = null;
+    const dist = camera.position.distanceTo(controls.target);
+    const perPx = (2 * dist * Math.tan((camera.fov * Math.PI) / 360)) / renderer.domElement.clientHeight;
+    tmpOffset.setFromMatrixColumn(camera.matrix, 0).multiplyScalar(dxPx * perPx);
+    const up = new Vector3().setFromMatrixColumn(camera.matrix, 1).multiplyScalar(-dyPx * perPx);
+    tmpOffset.add(up);
+    camera.position.add(tmpOffset);
+    controls.target.add(tmpOffset);
+    controls.update();
+    invalidate();
+  }
+
+  container.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;
+    const dx = e.deltaX * unit;
+    const dy = e.deltaY * unit;
+    if (e.ctrlKey || e.metaKey) {
+      zoomAt(Math.exp(clamp(dy, -50, 50) * 0.01), e.clientX, e.clientY); // pinch
+      return;
+    }
+    const now = performance.now();
+    const trackpadLike = e.deltaMode === 0 && (dx !== 0 || !Number.isInteger(dy) || Math.abs(dy) < 50);
+    if (trackpadLike) lastTrackpadAt = now;
+    if (trackpadLike || now - lastTrackpadAt < 400) panBy(dx, dy);
+    else zoomAt(Math.exp(clamp(dy, -240, 240) * 0.0015), e.clientX, e.clientY); // mouse wheel notch ≈ 16%
+  }, { passive: false, capture: true });
+
+  let gestureScale = 1;
+  container.addEventListener('gesturestart', (e) => {
+    e.preventDefault();
+    gestureScale = 1;
+  });
+  container.addEventListener('gesturechange', (e) => {
+    e.preventDefault();
+    zoomAt(gestureScale / e.scale, e.clientX, e.clientY);
+    gestureScale = e.scale;
+  });
 
   // --- render loop -------------------------------------------------------------------------
   let flattenAnim = null;
@@ -746,6 +849,11 @@ export function createNetworkScene(container, inspector, { onFocus } = {}) {
     setSpeed(s) {
       speed = s;
     },
+    setDragMode,
+    /** Zoom around the view center (buttons / keyboard). */
+    zoomBy(factor) {
+      zoomAt(factor);
+    },
     setPaused(p) {
       paused = p;
     },
@@ -768,6 +876,26 @@ export function createNetworkScene(container, inspector, { onFocus } = {}) {
         return { x: rect.left + ((v.x + 1) / 2) * rect.width, y: rect.top + ((1 - v.y) / 2) * rect.height };
       },
       levels: () => ({ ...levels }),
+      cameraState: () => ({
+        position: camera.position.toArray(),
+        target: controls.target.toArray(),
+        distance: camera.position.distanceTo(controls.target),
+        direction: camera.position.clone().sub(controls.target).normalize().toArray(),
+      }),
+      /** Client position of a world point. */
+      project([x, y, z]) {
+        const v = new Vector3(x, y, z).project(camera);
+        const rect = renderer.domElement.getBoundingClientRect();
+        return { x: rect.left + ((v.x + 1) / 2) * rect.width, y: rect.top + ((1 - v.y) / 2) * rect.height };
+      },
+      /** World point on the z = 0 plane under a client position. */
+      worldAt(clientX, clientY) {
+        const rect = renderer.domElement.getBoundingClientRect();
+        ndc.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+        raycaster.setFromCamera(ndc, camera);
+        plane.constant = 0;
+        return raycaster.ray.intersectPlane(plane, new Vector3())?.toArray() ?? null;
+      },
       targets: () => ({ ...targets }),
       sliding: () => !!slideAnim,
       stats: () => ({ renders, calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, links: links1.n + links2.n }),

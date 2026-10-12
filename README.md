@@ -18,6 +18,10 @@ built to be light enough for an 8 GB laptop with integrated graphics.
 - **3D forward pass**: one station per stage, left to right. Cells extrude by |activation|.
 - **Top-k connections** for every dense neuron, ranked by |weight × input| (k slider, default 8),
   colored by sign and with opacity by magnitude.
+- **Navigation like a map or design tool**: drag (or one finger) slides the view; two-finger
+  trackpad scroll slides; pinch (trackpad or touchscreen), Ctrl+scroll, a mouse wheel, the on-screen
+  +/− buttons or the +/− keys zoom toward the cursor; right-drag, Shift+drag or the **Rotate** drag
+  mode tilts the scene.
 - **Hover / click any cell or neuron** for its exact value and incoming connections: conv receptive
   field with Σ w·x + bias, the pool window with the winning cell, the flatten source, dense top-k.
 - **Play forward pass**: the camera flies station to station while layers light up in order.

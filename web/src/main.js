@@ -214,6 +214,16 @@ async function loadScene() {
   topk.addEventListener('input', syncTopK);
   syncTopK();
 
+  const setDrag = (mode) => {
+    scene3d.setDragMode(mode);
+    $('drag-move').setAttribute('aria-checked', String(mode === 'move'));
+    $('drag-rotate').setAttribute('aria-checked', String(mode === 'rotate'));
+  };
+  $('drag-move').addEventListener('click', () => setDrag('move'));
+  $('drag-rotate').addEventListener('click', () => setDrag('rotate'));
+  $('zoom-in').addEventListener('click', () => scene3d.zoomBy(0.75));
+  $('zoom-out').addEventListener('click', () => scene3d.zoomBy(1 / 0.75));
+
   $('play').addEventListener('click', () => player.toggle());
   $('step-back').addEventListener('click', () => player.step(-1));
   $('step-forward').addEventListener('click', () => player.step(1));
@@ -252,6 +262,10 @@ async function loadScene() {
       player.step(1);
     } else if (e.key === 'ArrowLeft') {
       player.step(-1);
+    } else if (e.key === '+' || e.key === '=') {
+      scene3d.zoomBy(0.75);
+    } else if (e.key === '-' || e.key === '_') {
+      scene3d.zoomBy(1 / 0.75);
     }
   });
   renderPlayer(player.state());

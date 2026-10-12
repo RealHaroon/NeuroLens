@@ -142,6 +142,7 @@ try {
   const scene = (fn, ...args) => page.evaluate(fn, ...args);
   const stats = () => scene(() => window.neurolens.scene.debug.stats());
   const frame = () => scene(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   let st = await stats();
   check(st.calls <= 20, `whole network in ${st.calls} draw calls (instanced), ${st.triangles.toLocaleString()} triangles`);
   check(st.links === 64 * 8 + 10 * 8, `top-8 connections drawn: ${st.links} lines (64×8 + 10×8)`);
@@ -190,11 +191,124 @@ try {
   const unrollMs = Date.now() - t0;
   check(unrollMs > 2000 && unrollMs < 6000, `flatten unroll animation ran (${(unrollMs / 1000).toFixed(1)} s)`);
 
+  // --- Navigation: drag slides, pinch/wheel zoom, trackpad scroll pans ---------
+  console.log('Navigation:');
+  const cam = () => scene(() => window.neurolens.scene.debug.cameraState());
+  const sameDir = (a, b) => a.direction.every((v, i) => Math.abs(v - b.direction[i]) < 1e-3);
+  const settleCam = async () => {
+    for (let i = 0; i < 40; i++) await frame(); // let OrbitControls damping finish
+  };
+  const wheel = (opts) => scene((o) => {
+    const c = document.querySelector('.scene-canvas');
+    c.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, ...o }));
+  }, opts);
+  await scene(() => window.neurolens.scene.focus('conv1', 0));
+  await settleCam();
+  const cbox = await (await page.$('.scene-canvas')).boundingBox();
+  const px = cbox.x + cbox.width * 0.3;
+  const py = cbox.y + cbox.height * 0.4;
+
+  let c0 = await cam();
+  const anchorBefore = await scene((x, y) => window.neurolens.scene.debug.worldAt(x, y), px, py);
+  for (let i = 0; i < 6; i++) await wheel({ ctrlKey: true, deltaY: -12, clientX: px, clientY: py });
+  let c1 = await cam();
+  const anchorAfter = await scene((x, y) => window.neurolens.scene.debug.worldAt(x, y), px, py);
+  // How far the point under the cursor moved, in screen pixels at the new zoom.
+  const pxPerUnit = cbox.height / (2 * c1.distance * Math.tan((20 * Math.PI) / 180));
+  const drift = Math.hypot(anchorAfter[0] - anchorBefore[0], anchorAfter[1] - anchorBefore[1]) * pxPerUnit;
+  check(c1.distance < c0.distance * 0.6 && drift < 2,
+    `pinch (ctrl+wheel) zooms in toward the fingers: distance ${c0.distance.toFixed(0)} -> ${c1.distance.toFixed(0)}, point under cursor moved ${drift.toFixed(1)} px`);
+
+  c0 = c1;
+  for (let i = 0; i < 6; i++) await wheel({ deltaX: 14.5, deltaY: 3.25, clientX: px, clientY: py });
+  c1 = await cam();
+  check(Math.abs(c1.distance - c0.distance) < 1e-6 && c1.target[0] > c0.target[0] && sameDir(c0, c1),
+    `two-finger trackpad scroll slides the view (target x ${c0.target[0].toFixed(1)} -> ${c1.target[0].toFixed(1)}, zoom unchanged)`);
+
+  await sleep(500); // leave the trackpad gesture window
+  c0 = await cam();
+  await wheel({ deltaY: 100, clientX: px, clientY: py });
+  c1 = await cam();
+  check(c1.distance > c0.distance * 1.1, `mouse-wheel notch zooms out (${c0.distance.toFixed(0)} -> ${c1.distance.toFixed(0)})`);
+
+  async function drag(button, dx, dy, modifier) {
+    if (modifier) await page.keyboard.down(modifier);
+    await page.mouse.move(px, py);
+    await page.mouse.down({ button });
+    for (let i = 1; i <= 10; i++) await page.mouse.move(px + (dx * i) / 10, py + (dy * i) / 10);
+    await page.mouse.up({ button });
+    if (modifier) await page.keyboard.up(modifier);
+    await settleCam();
+  }
+  c0 = await cam();
+  await drag('left', -180, 40);
+  c1 = await cam();
+  check(sameDir(c0, c1) && c1.target[0] > c0.target[0] + 1,
+    `left-drag slides (no rotation): target x ${c0.target[0].toFixed(1)} -> ${c1.target[0].toFixed(1)}`);
+  c0 = c1;
+  await drag('right', 150, 0);
+  c1 = await cam();
+  check(!sameDir(c0, c1), 'right-drag rotates');
+  c0 = c1;
+  await drag('left', 120, 0, 'Shift');
+  c1 = await cam();
+  check(!sameDir(c0, c1), 'Shift+drag rotates');
+
+  await page.click('#drag-rotate');
+  c0 = await cam();
+  await drag('left', 150, 0);
+  c1 = await cam();
+  check(!sameDir(c0, c1), '"Rotate" mode: left-drag rotates');
+  await page.click('#drag-move');
+
+  c0 = await cam();
+  await page.click('#zoom-in');
+  await settleCam();
+  c1 = await cam();
+  const zIn = c1.distance / c0.distance;
+  await page.click('#zoom-out');
+  await settleCam();
+  const zOut = (await cam()).distance / c1.distance;
+  check(Math.abs(zIn - 0.75) < 0.01 && Math.abs(zOut - 1 / 0.75) < 0.01, `zoom buttons: ×${zIn.toFixed(2)} then ×${zOut.toFixed(2)}`);
+
+  // Touchscreen: a real two-finger pinch and a one-finger slide through Chrome's touch emulation.
+  const cdp = await page.target().createCDPSession();
+  await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+  const tcx = cbox.x + cbox.width / 2;
+  const tcy = cbox.y + cbox.height / 2;
+  async function touch(frames) {
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: frames[0] });
+    for (const pts of frames.slice(1)) {
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: pts });
+      await frame();
+    }
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await settleCam();
+  }
+  c0 = await cam();
+  await touch(Array.from({ length: 12 }, (_, i) => [
+    { x: tcx - 30 - i * 12, y: tcy, id: 1 },
+    { x: tcx + 30 + i * 12, y: tcy, id: 2 },
+  ]));
+  c1 = await cam();
+  check(c1.distance < c0.distance * 0.8, `touch pinch-out zooms in (${c0.distance.toFixed(0)} -> ${c1.distance.toFixed(0)})`);
+  // One finger slides the content with the finger (checked in screen space, since
+  // the camera may have been rotated above).
+  await scene(() => window.neurolens.scene.focus('conv1', 0));
+  await settleCam();
+  c0 = await cam();
+  const grabbed = await scene((x, y) => window.neurolens.scene.debug.worldAt(x, y), tcx, tcy);
+  await touch(Array.from({ length: 12 }, (_, i) => [{ x: tcx - i * 15, y: tcy, id: 1 }]));
+  c1 = await cam();
+  const nowAt = await scene((w) => window.neurolens.scene.debug.project(w), grabbed);
+  check(sameDir(c0, c1) && nowAt.x < tcx - 120 && Math.abs(nowAt.y - tcy) < 20,
+    `one-finger touch drag slides: grabbed point moved ${(nowAt.x - tcx).toFixed(0)} px with a −165 px swipe, no rotation`);
+  await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: false });
+
   // --- Phase 4: playback, kernel slide, explanation panel ----------------------
   console.log('Playback:');
   const pstate = () => scene(() => window.neurolens.player.state());
   const text = (sel) => page.$eval(sel, (el) => el.textContent.trim());
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await page.select('#speed', '4');
   await page.click('#play');
   await page.waitForFunction(() => window.neurolens.player.state().index === 2, { timeout: 10000 });

@@ -81,6 +81,11 @@
               <input id="topk" type="range" min="1" max="32" value="8" />
               <output id="topk-value" for="topk">8</output>
             </label>
+            <div class="segmented" role="radiogroup" aria-label="Dragging the view">
+              <span class="segmented-label">Drag to</span>
+              <button id="drag-move" type="button" role="radio" aria-checked="true">Move</button>
+              <button id="drag-rotate" type="button" role="radio" aria-checked="false">Rotate</button>
+            </div>
             <button id="unroll" type="button">Unroll flatten</button>
             <button id="reset-view" type="button">Reset view</button>
             <nav id="stations" class="stations" aria-label="Jump to layer"></nav>
@@ -88,8 +93,12 @@
         </div>
         <div id="scene" class="scene">
           <div id="scene-status" class="scene-status">Loading 3D view…</div>
+          <div class="zoom-buttons">
+            <button id="zoom-in" type="button" aria-label="Zoom in" title="Zoom in (+)">+</button>
+            <button id="zoom-out" type="button" aria-label="Zoom out" title="Zoom out (−)">−</button>
+          </div>
         </div>
-        <p class="scene-hint">Drag to orbit · right-drag to pan · scroll to zoom · hover a cell or neuron for its value · click to pin · double-click to focus a layer</p>
+        <p class="scene-hint">Drag or two-finger scroll to move · pinch, Ctrl+scroll or +/− to zoom · right-drag or Shift+drag to rotate · hover a cell for its value · click to pin · double-click to focus a layer</p>
         <details class="panel layer-table-wrap">
           <summary>Layer outputs (numbers)</summary>
           <table id="layers" class="layer-table">
