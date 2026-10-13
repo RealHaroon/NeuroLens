@@ -166,7 +166,7 @@ select { font: inherit; font-size: 0.85rem; padding: 0.3rem 0.4rem; border-radiu
 .lg-links i { display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin: 0 2px 0 4px; }
 .lg-pos { background: #e5634a; }
 .lg-neg { background: #3987e5; }
-@media (max-width: 800px) { .scene-legend { display: none; } }
+@media (max-width: 800px) { .scene-legend { display: none; } .scene-caption { bottom: 10px; } }
 
 .layer-table-wrap { overflow-x: auto; }
 .layer-table-wrap summary { cursor: pointer; font-size: 0.85rem; color: var(--muted); }
@@ -192,7 +192,9 @@ select { font: inherit; font-size: 0.85rem; padding: 0.3rem 0.4rem; border-radiu
 
 /* In-scene caption (kernel slide) and playback emphasis */
 .scene-caption {
-  position: absolute; top: 10px; left: 10px; z-index: 2; padding: 0.4rem 0.65rem; border-radius: 7px; pointer-events: none;
+  /* Bottom-left above the legend, so it never covers the layer titles at the top. */
+  position: absolute; bottom: 64px; left: 10px; max-width: calc(100% - 70px); z-index: 2;
+  padding: 0.4rem 0.65rem; border-radius: 7px; pointer-events: none;
   background: rgba(14, 17, 23, 0.85); color: #e6e8ec; font-size: 12.5px; font-variant-numeric: tabular-nums; border: 1px solid #fab21966;
 }
 .scene-caption b { color: #fab219; }

@@ -357,6 +357,57 @@ try {
   check(await page.$eval('.scene-caption', (el) => el.hidden), 'slide finishes and restores the full feature maps');
   await page.click('#kernel-slide');
 
+  console.log('Step animations:');
+  const anim = () => scene(() => window.neurolens.scene.debug.anim());
+  const waitPhase = (ph) => page.waitForFunction((p) => window.neurolens.scene.debug.phase() === p, { timeout: 15000 }, ph);
+  const play = (id, opts = {}) => scene((id, o) => {
+    window.__stepDone = null;
+    window.neurolens.scene.playStep(id, { flySeconds: 0.01, ...o }).then((ok) => (window.__stepDone = ok));
+  }, id, opts);
+  const stepDone = () => page.waitForFunction(() => window.__stepDone !== null, { timeout: 20000 }).then(() => scene(() => window.__stepDone));
+
+  await play('conv1');
+  await waitPhase('wave');
+  check(true, 'conv1: build-up wave plays');
+  check(await stepDone(), 'conv1 wave completes');
+
+  await play('pool1');
+  await waitPhase('relu');
+  const neg0 = (await anim()).conv1Negatives;
+  await waitPhase('pool');
+  let a = await anim();
+  check(neg0 > 0 && a.conv1Negatives === 0, `pool1: ReLU sinks conv1's negatives (${neg0} shown at the start -> ${a.conv1Negatives} after)`);
+  check(a.flyers === 8 && a.windows === 8, `pool1: a 2×2 window on each of the 8 maps, ${a.flyers} max cells flying`);
+  check(await stepDone(), 'pool1 animation completes');
+  a = await anim();
+  check(a.phase === null && a.conv1Negatives === 0 && a.windows === 0, 'after pool1, conv1 stays post-ReLU and the windows are gone');
+
+  await play('conv2', { kernelSlide: true });
+  await waitPhase('slide');
+  await sleep(400);
+  a = await anim();
+  check(a.windows === 9, `conv2 slide: 3×3 windows on all 8 pool1 maps + the filter outline (${a.windows} boxes)`);
+  await scene(() => window.neurolens.scene.cancelAnimations());
+  check((await stepDone()) === false && (await anim()).windows === 0, 'cancelling mid-step stops it and restores the display');
+
+  await play('dense1');
+  await waitPhase('pulses');
+  await sleep(500);
+  a = await anim();
+  check(a.pulses > 50, `dense1: ${a.pulses} signal pulses in flight`);
+  check(await stepDone(), 'dense1 pulses complete');
+
+  await play('output');
+  await waitPhase('pulses');
+  a = await anim();
+  check(a.shownProbs && a.shownProbs.every((p) => p === 0), 'output: probabilities hidden while the logits are computed');
+  await waitPhase('race');
+  await sleep(150);
+  const early = Math.max(...(await anim()).shownProbs);
+  check(early < 0.5, `softmax race starts near equal odds (top ${(early * 100).toFixed(1)}%)`);
+  check(await stepDone(), 'output race completes');
+  check((await anim()).shownProbs === null, 'after the race the real softmax is shown');
+
   console.log('About panel:');
   for (const [id, title, params] of [['conv1', 'Convolution 1', '80'], ['conv2', 'Convolution 2', '1,168'], ['dense1', 'Dense 1 + ReLU', '50,240'], ['output', 'Output + softmax', '650'], ['pool1', 'ReLU + max-pool 1', '0']]) {
     await page.click(`#stations button[data-station="${id}"]`);

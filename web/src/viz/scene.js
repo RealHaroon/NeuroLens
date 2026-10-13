@@ -5,8 +5,9 @@
 // changes, or an animation is running, which keeps an idle laptop cool.
 
 import {
-  AmbientLight, Box3, BoxGeometry, Color, DirectionalLight, EdgesGeometry, LineBasicMaterial, MOUSE, TOUCH,
-  LineSegments, PerspectiveCamera, Plane, Raycaster, Scene, Vector2, Vector3, WebGLRenderer,
+  AmbientLight, Box3, BoxGeometry, Color, DirectionalLight, EdgesGeometry, InstancedBufferAttribute, InstancedMesh,
+  LineBasicMaterial, LineSegments, MeshBasicMaterial, MOUSE, PerspectiveCamera, Plane, Raycaster, Scene, TOUCH, Vector2,
+  Vector3, WebGLRenderer,
 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DObject, CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
@@ -14,11 +15,11 @@ import { buildLayout } from './layout.js';
 import { BOX, GridLayer, instanced, LineBatch, NeuronLayer, writeMatrix } from './primitives.js';
 import { ACCENT, cssGradient, LUTS, lutIndex, MUTED, SCENE_BG, SIGN_COLORS } from './colors.js';
 import { convInbound, denseTopK, poolInbound, unflatten } from './connections.js';
+import { createSteps } from './steps.js';
 
 const MAX_K = 32;
 const FLATTEN_SECONDS = 2.6;
 const FLY_SECONDS = 0.9;
-const SLIDE_SECONDS = 8;
 const DIM = 0.07; // brightness of stations the forward pass hasn't reached yet
 
 const STATION_LABELS = {
@@ -120,12 +121,36 @@ export function createNetworkScene(container, inspector, { onFocus } = {}) {
   outline.visible = false;
   scene.add(outline);
 
-  // Kernel-slide animation: the 3x3 window on the input and the active filter.
+  // Step animations: window outlines (kernel / pooling windows) and flying max cells.
   const edgeBox = new EdgesGeometry(new BoxGeometry(1, 1, 1));
-  const windowBox = new LineSegments(edgeBox, new LineBasicMaterial({ color: 0xfab219 }));
-  const kernelBox = new LineSegments(edgeBox, new LineBasicMaterial({ color: 0xfab219 }));
-  windowBox.visible = kernelBox.visible = false;
-  scene.add(windowBox, kernelBox);
+  const boxMaterial = new LineBasicMaterial({ color: 0xfab219 });
+  const boxes = Array.from({ length: 20 }, () => {
+    const b = new LineSegments(edgeBox, boxMaterial);
+    b.visible = false;
+    scene.add(b);
+    return b;
+  });
+  const flyers = new InstancedMesh(BOX, new MeshBasicMaterial({ color: 0xffffff }), 16);
+  flyers.instanceColor = new InstancedBufferAttribute(new Float32Array(16 * 3), 3);
+  flyers.count = 0;
+  flyers.frustumCulled = false;
+  scene.add(flyers);
+  const flyerColor = new Color(0xfab219);
+
+  function showBox(i, center, size) {
+    boxes[i].position.set(...center);
+    boxes[i].scale.set(...size);
+    boxes[i].visible = true;
+  }
+  function hideBoxes() {
+    for (const b of boxes) b.visible = false;
+  }
+  function setFlyer(i, center, size, brightness) {
+    writeMatrix(flyers.instanceMatrix.array, i, center[0], center[1], center[2], size, size, size);
+    flyers.instanceColor.array.set([flyerColor.r * brightness, flyerColor.g * brightness, flyerColor.b * brightness], i * 3);
+    flyers.instanceMatrix.needsUpdate = true;
+    flyers.instanceColor.needsUpdate = true;
+  }
 
   // --- labels --------------------------------------------------------------------
   const stationLabels = {};
@@ -200,26 +225,71 @@ export function createNetworkScene(container, inspector, { onFocus } = {}) {
   let result = null;
   let k = 8;
 
+  // Display overrides used by the step animations (viz/steps.js). They are
+  // re-applied on every redraw, so live drawing during an animation stays correct.
+  //   mods[grid] = { reveal(x, y) -> 0..1, reluT: 0..1, mask: { n, C, channels? } }
+  const mods = {};
+  const neuronMods = { dense1: null, output: null }; // (i) => radius/brightness scale
+  let probOverride = null; // probabilities shown instead of the real softmax (race)
+  const scratch = {};
+  const kernelMax = { conv1Kernels: maxAbs(W.conv1.kernel), conv2Kernels: maxAbs(W.conv2.kernel) };
+
+  function refreshGrid(name) {
+    let data;
+    let max;
+    if (name === 'conv1Kernels' || name === 'conv2Kernels') {
+      data = W[name.slice(0, 5)].kernel;
+      max = kernelMax[name];
+    } else {
+      data = result?.[name].data ?? null;
+      max = name === 'input' ? 1 : data ? maxAbs(data) : 0;
+    }
+    const m = mods[name];
+    if (data && m && (m.reluT || m.mask)) {
+      const buf = (scratch[name] ??= new Float32Array(data.length));
+      buf.set(data);
+      if (m.reluT) {
+        for (let i = 0; i < buf.length; i++) if (buf[i] < 0) buf[i] *= 1 - m.reluT;
+      }
+      if (m.mask) {
+        // Hide cells not yet "computed": cell index >= n, or visible(cell) false.
+        const { n = 0, visible, C, channels } = m.mask;
+        for (let i = visible ? 0 : n * C; i < buf.length; i++) {
+          if (channels && !channels.has(i % C)) continue;
+          if (!visible || !visible(Math.floor(i / C))) buf[i] = 0;
+        }
+      }
+      data = buf;
+    }
+    grids[name].update(data, max, m?.reveal);
+    invalidate();
+  }
+
+  function refreshNeurons() {
+    dense.update(result?.relu3.data ?? null, result ? maxAbs(result.relu3.data) : 0, neuronMods.dense1);
+    output.update(probOverride ?? result?.softmax.data ?? null, 1, neuronMods.output);
+    updateBars();
+    invalidate();
+  }
+
+  function refreshAll() {
+    for (const name of Object.keys(grids)) refreshGrid(name);
+    refreshNeurons();
+  }
+
   function update(next) {
     result = next;
-    const zero = null;
-    grids.input.update(result?.input.data ?? zero, 1);
-    grids.conv1.update(result?.conv1.data ?? zero, result ? maxAbs(result.conv1.data) : 0);
-    grids.pool1.update(result?.pool1.data ?? zero, result ? maxAbs(result.pool1.data) : 0);
-    grids.conv2.update(result?.conv2.data ?? zero, result ? maxAbs(result.conv2.data) : 0);
-    grids.pool2.update(result?.pool2.data ?? zero, result ? maxAbs(result.pool2.data) : 0);
-    flatten.update(result?.flatten.data ?? zero, result ? maxAbs(result.flatten.data) : 0);
-    dense.update(result?.relu3.data ?? zero, result ? maxAbs(result.relu3.data) : 0);
-    output.update(result?.softmax.data ?? zero, 1);
-    updateBars();
+    if (!result) cancelAnimations();
+    refreshAll();
+    flatten.update(result?.flatten.data ?? null, result ? maxAbs(result.flatten.data) : 0);
     updateLinks();
     refreshFocus();
     invalidate();
   }
 
   function updateBars() {
-    const probs = result?.softmax.data;
-    const top = probs ? argmax(probs) : -1;
+    const probs = probOverride ?? result?.softmax.data;
+    const top = probs && Math.max(...probs) > 0 ? argmax(probs) : -1;
     const { x, maxLength, height } = S.output.bars;
     const mat = bars.instanceMatrix.array;
     const col = bars.instanceColor.array;
@@ -333,7 +403,7 @@ export function createNetworkScene(container, inspector, { onFocus } = {}) {
   const canvas = renderer.domElement;
   canvas.addEventListener('pointermove', (e) => {
     pointer = { x: e.clientX, y: e.clientY };
-    if (e.buttons || slideAnim) return; // orbiting, or the kernel slide owns the highlight
+    if (e.buttons || steps.phase()) return; // orbiting, or a step animation owns the highlight
     const key = keyOf(pickAt(e.clientX, e.clientY));
     if (!sameKey(key, hovered)) {
       hovered = key;
@@ -656,7 +726,7 @@ export function createNetworkScene(container, inspector, { onFocus } = {}) {
 
   // --- render loop -------------------------------------------------------------------------
   let flattenAnim = null;
-  let slideAnim = null;
+  const anims = new Set(); // step animations: { t, seconds, frame(t), resolve }
   let paused = false; // freezes the flatten/slide animations (playback pause)
   let speed = 1;
   let last = performance.now();
@@ -689,10 +759,15 @@ export function createNetworkScene(container, inspector, { onFocus } = {}) {
       }
       active = true;
     }
-    if (slideAnim && adt > 0) {
-      slideAnim.t = Math.min(1, slideAnim.t + adt / SLIDE_SECONDS);
-      if (!result || slideAnim.t >= 1) endSlide();
-      else stepSlide();
+    if (anims.size && adt > 0) {
+      for (const a of [...anims]) {
+        a.t = Math.min(1, a.t + adt / a.seconds);
+        a.frame(a.t);
+        if (a.t >= 1) {
+          anims.delete(a);
+          a.resolve(true);
+        }
+      }
       active = true;
     }
     for (const id in levels) {
@@ -713,90 +788,31 @@ export function createNetworkScene(container, inspector, { onFocus } = {}) {
     }
   });
 
-  function playFlatten() {
-    cancelAnimations();
-    hovered = null;
-    pinned = null;
-    refreshFocus();
+  /** Run `frame(t)` for t: 0 -> 1 over `seconds` of animation time. Resolves false if cancelled. */
+  function animate(seconds, frame) {
+    return new Promise((resolve) => {
+      const a = { t: 0, seconds: Math.max(0.001, seconds), frame, resolve };
+      anims.add(a);
+      frame(0);
+      invalidate();
+    });
+  }
+
+  function runFlatten() {
     return new Promise((done) => {
       flattenAnim = { t: 0, done };
     });
   }
 
-  /**
-   * Slide one conv1 filter's 3x3 window over the input, filling its feature map
-   * cell by cell. Defaults to the filter that responds most strongly to this input.
-   */
-  function playKernelSlide(channel) {
+  function playFlatten() {
     cancelAnimations();
     hovered = null;
     pinned = null;
     refreshFocus();
-    if (!result) return Promise.resolve();
-    const ch = channel ?? strongestFilter();
-    return new Promise((done) => {
-      slideAnim = { t: 0, ch, done, masked: new Float32Array(result.conv1.data.length) };
-      stepSlide();
-    });
+    return runFlatten();
   }
 
-  function strongestFilter() {
-    const sums = new Float32Array(8);
-    result.conv1.data.forEach((v, i) => {
-      if (v > 0) sums[i % 8] += v;
-    });
-    return argmax(sums);
-  }
-
-  function stepSlide() {
-    const a = slideAnim;
-    const data = result.conv1.data;
-    const done = Math.min(784, Math.floor(a.t * 785));
-    a.masked.set(data);
-    for (let i = done; i < 784; i++) a.masked[i * 8 + a.ch] = 0;
-    grids.conv1.update(a.masked, maxAbs(data));
-
-    const at = Math.min(783, done);
-    const r = Math.floor(at / 28);
-    const c = at % 28;
-    const inCell = grids.input.cell(0, r, c);
-    windowBox.position.set(inCell.center[0], inCell.center[1], 1);
-    windowBox.scale.set(3.05, 3.05, 2.4);
-    windowBox.visible = true;
-    const kp = S.conv1.layers.conv1Kernels[a.ch];
-    kernelBox.position.set(kp.x0 + kp.pitch, kp.y0 - kp.pitch, 0.6);
-    kernelBox.scale.set(3 * kp.pitch + 0.2, 3 * kp.pitch + 0.2, 1.4);
-    kernelBox.visible = true;
-
-    const out = grids.conv1.cell(a.ch, r, c);
-    outline.visible = true;
-    outline.position.set(...out.center);
-    outline.scale.set(out.size[0] * 1.15, out.size[1] * 1.15, out.size[2] * 1.15);
-    focusLinks.clear();
-    const inbound = convInbound(W.conv1, result.input, r, c, a.ch);
-    const maxC = Math.max(...inbound.map((e) => Math.abs(e.contribution)), 1e-9);
-    for (const e of inbound) {
-      const from = anchor(grids.input.cell(0, e.r, e.c), 'front');
-      if (e.contribution === 0) focusLinks.push(from, anchor(out, 'front'), MUTED, 0.5);
-      else pushLink(focusLinks, from, anchor(out, 'front'), e.contribution, maxC, 0.3);
-    }
-    focusLinks.commit();
-    const v = data[at * 8 + a.ch];
-    caption.innerHTML = `Filter ${a.ch} at row ${r}, col ${c}: Σ w·x + b = <b>${v.toFixed(3)}</b> → ReLU <b>${Math.max(0, v).toFixed(3)}</b>`;
-    caption.hidden = false;
-  }
-
-  function endSlide() {
-    const a = slideAnim;
-    slideAnim = null;
-    if (result) grids.conv1.update(result.conv1.data, maxAbs(result.conv1.data));
-    windowBox.visible = kernelBox.visible = false;
-    caption.hidden = true;
-    refreshFocus();
-    a.done();
-  }
-
-  /** Finish any running flatten/slide animation immediately. */
+  /** Stop every running animation and restore the normal display. */
   function cancelAnimations() {
     if (flattenAnim) {
       const { done } = flattenAnim;
@@ -805,9 +821,33 @@ export function createNetworkScene(container, inspector, { onFocus } = {}) {
       links1.lines.visible = true;
       done();
     }
-    if (slideAnim) endSlide();
+    for (const a of anims) a.resolve(false);
+    anims.clear();
+    steps?.cancel();
     invalidate();
   }
+
+  function setLinkDim(v) {
+    linkDim.links1 = v;
+    linkDim.links2 = v;
+    invalidate();
+  }
+
+  const steps = createSteps({
+    scene, S, W, grids, mods, neuronMods, dense, output, flatten, focusLinks, outline, flyers,
+    getResult: () => result,
+    getK: () => k,
+    setCaption(html) {
+      caption.hidden = !html;
+      if (html) caption.innerHTML = html;
+    },
+    setProbOverride(p) {
+      probOverride = p;
+      refreshNeurons();
+    },
+    setLinkDim, showBox, hideBoxes, setFlyer, refreshGrid, refreshNeurons, refreshAll,
+    animate, runFlatten, focus, focusRange, anchor, pushLink, flattenAnchor,
+  });
 
   // --- sizing ---------------------------------------------------------------------------------
   function resize() {
@@ -840,7 +880,8 @@ export function createNetworkScene(container, inspector, { onFocus } = {}) {
     update,
     setTopK,
     playFlatten,
-    playKernelSlide,
+    /** Fly to a station and play its step animation (see viz/steps.js). */
+    playStep: (id, opts) => steps.playStep(id, opts),
     cancelAnimations,
     focus,
     focusRange,
@@ -897,7 +938,17 @@ export function createNetworkScene(container, inspector, { onFocus } = {}) {
         return raycaster.ray.intersectPlane(plane, new Vector3())?.toArray() ?? null;
       },
       targets: () => ({ ...targets }),
-      sliding: () => !!slideAnim,
+      sliding: () => steps.phase() === 'slide',
+      phase: () => steps.phase(),
+      /** What the step animations are currently showing (for tests). */
+      anim: () => ({
+        phase: steps.phase(),
+        flyers: flyers.count,
+        pulses: steps.pulseCount(),
+        windows: boxes.filter((b) => b.visible).length,
+        shownProbs: probOverride ? Array.from(probOverride) : null,
+        conv1Negatives: grids.conv1.values.reduce((n, v) => n + (v < 0 ? 1 : 0), 0),
+      }),
       stats: () => ({ renders, calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, links: links1.n + links2.n }),
       camera,
       controls,

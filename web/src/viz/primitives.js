@@ -64,8 +64,11 @@ export class GridLayer {
     this.mesh.name = name;
   }
 
-  /** Recolor and re-extrude every cell from a layer's flat data array. */
-  update(data, max) {
+  /**
+   * Recolor and re-extrude every cell from a layer's flat data array.
+   * `reveal(x, y)` (optional, 0..1) flattens and fades cells toward zero, for build-up animations.
+   */
+  update(data, max, reveal) {
     const mat = this.mesh.instanceMatrix.array;
     const col = this.mesh.instanceColor.array;
     const [d0, d1] = this.depthRange;
@@ -75,11 +78,20 @@ export class GridLayer {
         for (let c = 0; c < p.cols; c++, i++) {
           const v = data ? data[p.index(r, c)] : 0;
           const n = max > 0 ? Math.min(1, Math.abs(v) / max) : 0;
-          const d = d0 + n * d1;
+          const x = p.x0 + c * p.pitch;
+          const y = p.y0 - r * p.pitch;
+          let d = d0 + n * d1;
+          let slot = lutIndex(v, max, this.signed);
+          if (reveal) {
+            const t = reveal(x, y);
+            const zero = this.signed ? 128 : 0;
+            d = Math.max(0.02, d * t);
+            slot = Math.round(zero + (slot - zero) * t);
+          }
           this.values[i] = v;
           this.depth[i] = d;
-          writeColor(col, i, this.lut, lutIndex(v, max, this.signed));
-          writeMatrix(mat, i, p.x0 + c * p.pitch, p.y0 - r * p.pitch, d / 2, p.size, p.size, d);
+          writeColor(col, i, this.lut, slot);
+          writeMatrix(mat, i, x, y, d / 2, p.size, p.size, d);
         }
       }
     }
@@ -129,18 +141,20 @@ export class NeuronLayer {
     this.mesh.name = name;
   }
 
-  update(data, max) {
+  /** `scale(i)` (optional) multiplies a neuron's radius and brightness, for swell/bounce animations. */
+  update(data, max, scale) {
     const mat = this.mesh.instanceMatrix.array;
     const col = this.mesh.instanceColor.array;
     const [r0, r1] = this.radius;
     for (let i = 0; i < this.count; i++) {
       const v = data ? data[i] : 0;
       const n = max > 0 ? Math.min(1, Math.max(0, v) / max) : 0;
-      const r = r0 + n * (r1 - r0);
+      const k = scale ? Math.max(0.02, scale(i)) : 1;
+      const r = (r0 + n * (r1 - r0)) * k;
       const [x, y, z] = this.positions[i];
       this.values[i] = v;
       this.r[i] = r;
-      writeColor(col, i, this.lut, Math.round(this.colorFloor + (n * (255 - this.colorFloor))));
+      writeColor(col, i, this.lut, Math.round((this.colorFloor + n * (255 - this.colorFloor)) * Math.min(1, k)));
       writeMatrix(mat, i, x, y, z, r, r, r);
     }
     this.mesh.instanceMatrix.needsUpdate = true;

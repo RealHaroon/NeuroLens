@@ -97,6 +97,24 @@ try {
   await page.screenshot({ path: join(OUT, 'kernel-slide.png') });
   await scene(page, () => window.neurolens.scene.cancelAnimations());
 
+  // Step animations: max-pooling with flying max cells, and signal pulses.
+  const step = (id) => scene(page, (id) => {
+    const { player, scene: sc } = window.neurolens;
+    player.goto(id); // light every layer and point the about panel at this one
+    sc.setLit(sc.stations.indexOf(id));
+    sc.playStep(id, { flySeconds: 0.01 });
+  }, id);
+  await step('pool1');
+  await sleep(2400);
+  await page.screenshot({ path: join(OUT, 'pooling.png') });
+  await step('dense1');
+  await sleep(1000);
+  await page.screenshot({ path: join(OUT, 'pulses.png') });
+  await step('output');
+  await sleep(2700);
+  await page.screenshot({ path: join(OUT, 'softmax-race.png') });
+  await scene(page, () => window.neurolens.scene.cancelAnimations());
+
   await page.click('#unroll');
   await sleep(900 + 1500);
   await page.screenshot({ path: join(OUT, 'flatten-unroll.png') });

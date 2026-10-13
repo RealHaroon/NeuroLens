@@ -4,7 +4,7 @@
 // Every navigation bumps a token; long-running awaits check it and bail out, so
 // stepping or restarting mid-animation never leaves two sequences running.
 
-const DWELL_SECONDS = 2.4;
+const DWELL_SECONDS = 1.6; // pause on each layer after its animation
 const FLY_SECONDS = 1.1;
 
 export function createPlayer(scene, { onChange } = {}) {
@@ -41,16 +41,7 @@ export function createPlayer(scene, { onChange } = {}) {
     scene.cancelAnimations();
     scene.setLit(i);
     emit();
-    const id = stations[i];
-    if (id === 'conv1' && kernelSlide) {
-      await scene.focusRange(['input', 'conv1'], FLY_SECONDS / speed);
-      if (my !== token) return false;
-      await scene.playKernelSlide();
-    } else {
-      await scene.focus(id, FLY_SECONDS / speed);
-      if (my !== token) return false;
-      if (id === 'flatten') await scene.playFlatten();
-    }
+    await scene.playStep(stations[i], { kernelSlide, flySeconds: FLY_SECONDS / speed });
     return my === token;
   }
 

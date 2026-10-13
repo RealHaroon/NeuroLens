@@ -26,10 +26,22 @@ built to be light enough for an 8 GB laptop with integrated graphics.
   mode tilts the scene.
 - **Hover / click any cell or neuron** for its exact value and incoming connections: conv receptive
   field with Σ w·x + bias, the pool window with the winning cell, the flatten source, dense top-k.
-- **Play forward pass**: the camera flies station to station while layers light up in order.
-  Pause, step back/forward (← / →, Space), speed 0.5×–4×.
-- **Kernel slide** (toggle): watch one 3×3 filter sweep the input and build its feature map
-  cell by cell.
+- **Play forward pass**: the camera flies station to station while layers light up in order,
+  and each layer plays an animation of what it computes. Pause, step back/forward (← / →, Space),
+  speed 0.5×–4×:
+  - **Input / Conv1 / Conv2**: cells rise in a build-up wave as the signal arrives.
+  - **ReLU + Pool**: negative (blue) values sink to zero, then a 2×2 window sweeps the digit's
+    busiest row slowly, with each window's max cell flying into the pooled map, and fast-forwards
+    through the rest.
+  - **Flatten**: the 7×7×16 block unrolls into the 784-cell column.
+  - **Dense**: signal pulses travel along each neuron's strongest connections (red adds, blue
+    subtracts), and neurons swell as their inputs arrive.
+  - **Output**: pulses compute the 10 logits, then a **softmax race**: the probabilities sharpen
+    from equal odds to the real softmax and the winner bounces.
+  - Respects the system "reduce motion" setting (animations are skipped).
+- **Kernel slide** (toggle): watch a filter sweep its input and build its feature map cell by
+  cell. For conv1 it's a 3×3 window over the image; for conv2 a 3×3×8 window over all 8 pooled
+  maps at once (72 inputs). The live readout shows Σ w·x + b → ReLU.
 - **Flatten unroll**: the 7×7×16 block animates into the 784-cell column.
 - **About this layer** panel: a plain-English explanation, output shape, parameter count, and a
   live fact about the current input.
@@ -40,6 +52,10 @@ built to be light enough for an 8 GB laptop with integrated graphics.
 | ![A 3×3 filter sliding over the input](docs/screenshots/kernel-slide.png) | ![Hovering a dense neuron highlights its 8 strongest inputs](docs/screenshots/dense-topk.png) |
 | **Playback: layers light up in order** | **Flatten unroll** |
 | ![Playback at the pooling layer, later layers still dark](docs/screenshots/playback.png) | ![The 7x7x16 block unrolling into a column](docs/screenshots/flatten-unroll.png) |
+| **Max-pooling: the max cell flies over** | **Signal pulses into the dense layer** |
+| ![2×2 max-pool windows with flying max cells](docs/screenshots/pooling.png) | ![Pulses travelling along the strongest connections](docs/screenshots/pulses.png) |
+| **Softmax race** | |
+| ![Probabilities sharpening toward the prediction](docs/screenshots/softmax-race.png) | |
 | **Conv receptive field on hover** | **Dark theme** |
 | ![Hovering a conv1 cell shows its 3×3 input window](docs/screenshots/conv1-hover.png) | ![Output layer in dark mode](docs/screenshots/dark-output.png) |
 
@@ -182,6 +198,7 @@ web/
     tf.js               the TF.js subset the app uses
     viz/                Three.js scene: layout, colormaps, instanced primitives, connections
     ui/                 forward-pass player, layer explanations
+    viz/steps.js        per-layer playback animations (wave, ReLU, pooling, slide, pulses, softmax)
   test/                 parity, pipeline, scene logic, e2e, screenshots
 docs/screenshots/
 ```
